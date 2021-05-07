@@ -335,7 +335,7 @@ stock int _EmptyPanelHint(Menu menu, MenuAction action, int param1, int param2) 
  * @param 3     The damage event.
  */
 #define VSH_DEFAULT_CODE_ON_PLAYER_HURT(%1,%2,%3)   \
-if( !IsBossType(%1, %2) || %1.bIsBoss) return;      \
+if( !IsBossType(%1, %2) || !%1.bIsBoss) return;     \
 int damage = %3.GetInt("damageamount");             \
 %1.GiveRage(damage)
 
