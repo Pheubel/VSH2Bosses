@@ -1,7 +1,5 @@
 // Data taken from https://wiki.alliedmods.net/Team_Fortress_2_Item_Definition_Indexes on the 7th of may, 2021. These values might not cover all items.
 
-#define TF_COSMETIC_CLASS "tf_wearable"
-
 // weapon ID's
 #define TF_WEAPON_ID_SCOUT_PRIMARY_SCATTERGUN 13
 #define TF_WEAPON_ID_SCOUT_PRIMARY_SCATTERGUN_RENAMED_OR_STRANGE 200
@@ -2781,6 +2779,11 @@
 #define TF_COSMETIC_ID_READY_STEADY_PAN_THIRD_PLACE_SEASON_2 8245
 #define TF_COSMETIC_ID_READY_STEADY_PAN_PARTICIPANT_SEASON_2 8246
 #define TF_COSMETIC_ID_READY_STEADY_PAN_HELPER_SEASON_2 8247
+
+// class shared by all wearable cosmetics
+#define TF_COSMETIC_CLASS "tf_wearable"
+
+// action item ID's
 #define TF_ACTION_ID_DUEL_MINIGAME 241
 #define TF_ACTION_ID_HALLOWEEN_NOISE_MAKER__BLACK_CAT 280
 #define TF_ACTION_ID_HALLOWEEN_NOISE_MAKER__GREMLIN 281
@@ -2804,6 +2807,13 @@
 #define TF_ACTION_ID_KRITZ_OR_TREAT_CANTEEN_MVM 30535
 #define TF_ACTION_ID_NOISE_MAKER__BIRTHDAY 536
 #define TF_ACTION_ID_NOISE_MAKER__WINTER_2011 673
+
+// action item classes
+#define TF_ACTION_CLASS_POWERUP_CANTEEN "tf_powerup_bottle"
+#define TF_ACTION_CLASS_GRAPLING_HOOK "tf_weapon_grapplinghook"
+#define TF_ACTION_CLASS_SPELLBOOK "tf_weapon_spellbook"
+
+// taunt ID's
 #define TF_TAUNT_ID_HIGH_FIVE 167
 #define TF_TAUNT_ID_DIRECTORS_VISION 438
 #define TF_TAUNT_ID_SCHADENFREUDE 463
