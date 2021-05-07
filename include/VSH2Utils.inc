@@ -280,3 +280,27 @@ stock int HandleKillingSpree(const VSH2Player player) {
 stock int _EmptyPanelHint(Menu menu, MenuAction action, int param1, int param2) {
     return 0;
 }
+
+/**
+ * Gives the boss rage when hurt.
+ *
+ * @param 1     The boss player.
+ * @param 2     The boss Id.
+ * @param 3     The damage event.
+ */
+#define VSH_DEFAULT_CODE_ON_PLAYER_HURT(%1,%2,%3)   \
+if( !IsBossType(%1, %2) || %1.bIsBoss) return;      \
+int damage = %3.GetInt("damageamount");             \
+%1.GiveRage(damage)
+
+/**
+ * Gives the boss rage when airblasted.
+ *
+ * @param 1     The boss player.
+ * @param 2     The boss Id.
+ * @param 3     The ConVars containing rage values.
+ */
+#define VSH_DEFAULT_CODE_ON_PLAYER_AIRBLASTED(%1,%2,%3)         \
+if( !IsBossType(%1, %2)) return;                                \
+float rage = %1.GetPropFloat("flRAGE");                         \
+%1.SetPropFloat("flRAGE", rage + %3.airblast_rage.FloatValue)
