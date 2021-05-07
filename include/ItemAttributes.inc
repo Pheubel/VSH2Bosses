@@ -1,4 +1,4 @@
-// Data taken from https://wiki.teamfortress.com/wiki/List_of_item_attributeson on the 7th of may, 2021. These values might not cover all attributes.
+// Data taken from https://wiki.teamfortress.com/wiki/List_of_item_attributes on the 7th of may, 2021. These values might not cover all attributes.
 
 #define MIN_ATTRIBUTES_ON_ITEMS 0
 #define MAX_ATTRIBUTES_ON_ITEMS 15
