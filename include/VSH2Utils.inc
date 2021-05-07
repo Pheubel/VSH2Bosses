@@ -19,7 +19,9 @@
 #define VSH_DEFAULT_SELECTOR_PANEL_MESSAGE "boss data.panel msg"
 #define VSH_DEFAULT_SELECTOR_MODELS "boss data.models"
 #define VSH_DEFAULT_SELECTOR_SKINS "boss data.skins"
-
+#define VSH_DEFAULT_SELECTOR_RAGE_DISTANCE "boss data.rage dist"
+#define VSH_DEFAULT_SELECTOR_MOVE_SPEED "boss data.move speed"
+#define VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES "boss data.attribs"
 
 enum struct VSH2CVars {
     ConVar scout_rage_gen;
@@ -113,7 +115,7 @@ stock void AddBossToMenu(Menu& menu, int bossId, const char[] name) {
 * @param config     The configuration map containing the boss' menu name.
 * @param selector   The path to the menu name inside the configuration map (defaults to "boss data.name").
 */
-stock void AddBossToMenuFromConfig(Menu& menu, int bossId, ConfigMap config, char[] selector = VSH_DEFAULT_SELECTOR_MENU_NAME) {
+stock void AddBossToMenuFromConfig(Menu& menu, int bossId, ConfigMap config, char selector[PLATFORM_MAX_PATH] = VSH_DEFAULT_SELECTOR_MENU_NAME) {
     char tostr[10]; 
     IntToString(bossId, tostr, sizeof(tostr));
     
@@ -276,6 +278,38 @@ stock int HandleKillingSpree(const VSH2Player player) {
     return player.GetPropInt("iKills") + 1;
 }
 
+// TODO: document this
+/**
+ * Description
+ *
+ * @param team     Param description
+ * @return         True if only scouts are left alive.
+ */
+stock bool OnlyScoutsLeft(const int team)
+{
+	for( int i=MaxClients; i; --i ) {
+		if( !IsValidClient(i) || !IsPlayerAlive(i) )
+			continue;
+		else if( GetClientTeam(i) == team && TF2_GetPlayerClass(i) != TFClass_Scout )
+			return false;
+	}
+	return true;
+}
+
+/**
+ * Description
+ *
+ * @param client     Param description
+ * @param false      Param description
+ * @return           Return description
+ */
+stock bool IsValidClient(const int client, bool nobots=false)
+{
+	if( client <= 0 || client > MaxClients || !IsClientConnected(client) || (nobots && IsFakeClient(client)) )
+		return false;
+	return IsClientInGame(client);
+}
+
 // An empty panel hint used internally when sending panels.
 stock int _EmptyPanelHint(Menu menu, MenuAction action, int param1, int param2) {
     return 0;
@@ -304,3 +338,15 @@ int damage = %3.GetInt("damageamount");             \
 if( !IsBossType(%1, %2)) return;                                \
 float rage = %1.GetPropFloat("flRAGE");                         \
 %1.SetPropFloat("flRAGE", rage + %3.airblast_rage.FloatValue)
+
+/**
+ * Reduces the boss' rage when jarated.
+ *
+ * @param 1     The boss player.
+ * @param 2     The boss Id.
+ * @param 3     The ConVars containing rage values.
+ */
+#define VSH_DEFAULT_CODE_ON_BOSS_JARATED(%1,%2,%3)              \
+if( !IsBossType(%1, %2)) return;                                \
+float rage = %1.GetPropFloat("flRAGE");                         \
+%1.SetPropFloat("flRAGE", rage - %3.jarate_rage.FloatValue);
