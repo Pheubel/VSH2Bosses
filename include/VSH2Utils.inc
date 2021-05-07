@@ -23,6 +23,16 @@
 #define VSH_DEFAULT_SELECTOR_MOVE_SPEED "boss data.move speed"
 #define VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES "boss data.attribs"
 
+#define ERROR_BUFFER_SIZE 256
+
+/**
+ * Creates an error log message that displays the faulty selector path.
+ */
+#define LOG_SELECTOR_ERROR_MESSAGE(%1)                                                          \
+char errorMessage[ERROR_BUFFER_SIZE];                                                           \
+FormatEx(errorMessage, ERROR_BUFFER_SIZE, "Could not find selection under selector: %s", %1);   \
+LogMessage(errorMessage)
+
 enum struct VSH2CVars {
     ConVar scout_rage_gen;
     ConVar airblast_rage;
@@ -201,7 +211,7 @@ stock void PlayRandomSoundFromConfigSelector(const VSH2Player player, ConfigMap 
         PlayRandomSoundFromConfigSection(player, sounds, soundFlag);
     }
     else {
-        LogError("Could not find selection under selector.");
+        LOG_SELECTOR_ERROR_MESSAGE(selector);
     }
 }
 
@@ -230,11 +240,13 @@ stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFCla
             PlayRandomSoundFromConfigSection(player, classSection, soundFlag);
         }
         else {
-            LogError("Could not find selection under class.");
+            char errorMessage[ERROR_BUFFER_SIZE];
+            FormatEx(errorMessage, ERROR_BUFFER_SIZE, "Could not find selection under selector: %s.%i", selector, view_as<int>(class)); 
+            LogMessage(errorMessage);
         }
     }
     else {
-        LogError("Could not find selection under selector.");
+        LOG_SELECTOR_ERROR_MESSAGE(selector);
     }
 }
 
