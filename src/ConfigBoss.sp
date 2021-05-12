@@ -1,19 +1,16 @@
 #pragma semicolon 1
 
 #include "include/VSH2Utils.inc"
+#include "include/ConfigBoss.inc"
 #include <vsh2>
 #include <files>
 #include <console>
 
-#define CHARACTER_CONFIG_FILE_PATH "configs/saxton_hale/boss_cfgs/configCharacters.cfg"
-
-#define MINIMAL_STREAK_FOR_SPREE 3
-#define DEFAULT_SPEED 100.0
-#define DEFAULT_MAX_SPEED 340.0
-#define DEFAULT_RAGE_RADIUS 300.0
-
 #define IS_CONFIG_BOSS(%1) (%1 >= bossIdOffset || %1 < (bossIdOffset + bossCount))
 #define GET_BOSS_CONFIG(%1) view_as<ConfigMap>(bossConfigs.Get(%1 - bossIdOffset))
+
+PrivateForward onChargeAbility;
+PrivateForward onRageAbility;
 
 VSH2GameMode vsh2_gm;
 VSH2CVars vsh_cVars;
@@ -22,6 +19,15 @@ int bossIdOffset = -1;
 int bossCount = 0;
 
 #define BUFFER_INCREMENT 32
+
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
+    CreateNative("ConfigBossHookAbility", Native_ConfigBossHookAbility);
+}
+
+public void OnPluginStart() {
+    onChargeAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
+    onRageAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
+}
 
 public void OnLibraryAdded(const char[] name) {
     if( StrEqual(name, "VSH2") ) {
@@ -82,8 +88,8 @@ public void OnLibraryAdded(const char[] name) {
 }
 
 void LoadHooks() {
-    if( !VSH2_HookEx(OnCallDownloads, Template_OnCallDownloads)) {
-		LogError("Error loading OnCallDownloads forwards for Config Boss subplugin.");
+    if( !VSH2_HookEx(OnCallDownloads, HandleOnCallDownloads)) {
+        LogError("Error loading OnCallDownloads forwards for Config Boss subplugin.");
     }
 
     if( !VSH2_HookEx(OnBossMenu, HandleOnBossMenu) ) {
@@ -148,7 +154,9 @@ void LoadHooks() {
     }
 }
 
+void HandleOnCallDownloads() {
 
+}
 
 void HandleOnBossMenu(Menu& menu) {
     ConfigMap bossConfig;
@@ -333,7 +341,10 @@ void HandleOnBossThink(const VSH2Player player)
     char abilityPluginName[64];
     char abilityName[32] = "Ability";
     if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPluginName, sizeof(abilityPluginName)) == 0) {
-        //TODO: call forward function to execute ability in child plugin
+        Call_StartForward(onChargeAbility);
+        Call_PushCell(player);
+        Call_PushCell(bossConfig);
+        Call_Finish();
     }
     else {
         abilityName = "Jump";
@@ -374,7 +385,10 @@ void HandleOnBossMedicCall(const VSH2Player player)
 
     char ragePluginName[64];
     if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, ragePluginName, sizeof(ragePluginName)) == 0) {
-        //TODO: call forward function to execute ability in child plugin
+        Call_StartForward(onRageAbility);
+        Call_PushCell(player);
+        Call_PushCell(bossConfig);
+        Call_Finish();
     }
     else {
         // use ConfigMap to set how large the rage radius is
@@ -499,4 +513,19 @@ void UnloadPlugins(ConfigMap bossConfig) {
             }
         }
     }
+}
+
+Native_ConfigBossHookAbility(Handle plugin, int numParams) {
+    AbilityCallbackType hook = GetNativeCell(1);
+    Function func = GetNativeFunction(2);
+    switch (hook) {
+        case OnChargeAbility: {
+            return onChargeAbility.AddFunction(plugin, func);
+        }
+        case OnRageAbility: {
+            return onRageAbility.AddFunction(plugin, func);
+        }
+    }
+
+    return 0;
 }
