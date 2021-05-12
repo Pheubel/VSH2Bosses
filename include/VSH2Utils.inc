@@ -4,15 +4,19 @@
 
 #define MAX_ATTRIBUTE_STRING_SIZE 128
 
+#define VSH_DEFAULT_SELECTOR_DISABLE "boss data.disable"
+#define VSH_DEFAULT_SELECTOR_CLASS "boss data.class"
+#define VSH_DEFAULT_SELECTOR_LIVES "boss data.lives"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_INTROS "boss data.sounds.intros"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_SUPER_JUMP "boss data.sounds.super jump"
+#define VSH_DEFAULT_SELECTOR_SOUNDS_CHARGE_ABILITY "boss data.sounds.charge ability"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_BACKSTAB "boss data.sounds.backstab"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_RAGE "boss data.sounds.rage"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_KILL_CLASS "boss data.sounds.kill class"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_SPREE "boss data.sounds.spree"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_LAST_GUY "boss data.sounds.last guy"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_WIN "boss data.sounds.win"
-#define VSH_DEFAULT_SELECTOR_SOUNDS_LOSE "boss data.sounds.lose"
+#define VSH_DEFAULT_SELECTOR_SOUNDS_DEATH "boss data.sounds.death"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_MUSIC "boss data.sounds.music"
 #define VSH_DEFAULT_SELECTOR_MENU_NAME "boss data.menu name"
 #define VSH_DEFAULT_SELECTOR_NAME "boss data.name"
@@ -21,17 +25,21 @@
 #define VSH_DEFAULT_SELECTOR_SKINS "boss data.skins"
 #define VSH_DEFAULT_SELECTOR_RAGE_DISTANCE "boss data.rage dist"
 #define VSH_DEFAULT_SELECTOR_MOVE_SPEED "boss data.move speed"
+#define VSH_DEFAULT_SELECTOR_MAX_SPEED "boss data.max speed"
 #define VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES "boss data.attribs"
+#define VSH_DEFAULT_SELECTOR_WEAPON_CLASS "boss data.weapon class"
+#define VSH_DEFAULT_SELECTOR_WEAPON_ID "boss data.weapon id"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY "boss data.charge ability"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN "boss data.charge ability.plugin"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS "boss data.charge ability.arguments"
+#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY "boss data.rage ability"
+#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_NAME "boss data.rage ability.name"
+#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN "boss data.rage ability.plugin"
+#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_ARGUMENTS "boss data.rage ability.arguments"
 
 #define ERROR_BUFFER_SIZE 256
 
-/**
- * Creates an error log message that displays the faulty selector path.
- */
-#define LOG_SELECTOR_ERROR_MESSAGE(%1)                                                          \
-char errorMessage[ERROR_BUFFER_SIZE];                                                           \
-FormatEx(errorMessage, ERROR_BUFFER_SIZE, "Could not find selection under selector: %s", %1);   \
-LogMessage(errorMessage)
+#define GET_PLAYER_BOSS_ID(%1) %1.GetPropInt("iBossType")
 
 enum struct VSH2CVars {
     ConVar scout_rage_gen;
@@ -45,14 +53,14 @@ enum struct ItemAttribute {
 }
 
 /**
- * Converts the attribute data to a string and outputs it to the buffer.
- *
- * @param attributes         Attributes present on an item.
- * @param attributeCount     Ammount of attributes passed in.
- * @param buffer             The output character buffer.
- * @param bufferSize         The size of the character buffer.
- * @return                   The amount of bytes written to the buffer.
- */
+* Converts the attribute data to a string and outputs it to the buffer.
+*
+* @param attributes         Attributes present on an item.
+* @param attributeCount     Ammount of attributes passed in.
+* @param buffer             The output character buffer.
+* @param bufferSize         The size of the character buffer.
+* @return                   The amount of bytes written to the buffer.
+*/
 stock int AttributesToString(ItemAttribute[] attributes, int attributeCount, char[] buffer, int bufferSize) {
     int bytesWritten = 0;
     char idString[4];
@@ -72,10 +80,10 @@ stock int AttributesToString(ItemAttribute[] attributes, int attributeCount, cha
 } 
 
 /**
- * Finds the ConVars commonly used in VSH2 bosses.
- *
- * @param target    The enum struct in which the convars will be loaded into.
- */
+* Finds the ConVars commonly used in VSH2 bosses.
+*
+* @param 1    The enum struct in which the convars will be loaded into.
+*/
 #define VSH_GET_CVARS(%1)                               \
 %1.scout_rage_gen = FindConVar("vsh2_scout_rage_gen");  \
 %1.airblast_rage = FindConVar("vsh2_airblast_rage");    \
@@ -169,11 +177,11 @@ stock void SetPanelMessageFromConfig(const VSH2Player player, ConfigMap config, 
 }
 
 /**
- * Sets the player name to the name of the boss.
- *
- * @param player       The boss player.
- * @param bossName     The name of the boss.
- */
+* Sets the player name to the name of the boss.
+*
+* @param player       The boss player.
+* @param bossName     The name of the boss.
+*/
 stock void SetPlayerNameToBoss(const VSH2Player player, const char[] bossName) {
     char name[MAX_BOSS_NAME_SIZE];
     strcopy(name, sizeof name, bossName);
@@ -181,12 +189,12 @@ stock void SetPlayerNameToBoss(const VSH2Player player, const char[] bossName) {
 }
 
 /**
- * Sets the player name to the name of the boss from the config map.
- *
- * @param player       The boss player.
- * @param config       The configuration map containing the boss' name.
- * @param selector     The path to the name of the boss inside the configuration map (defaults to "boss data.name").
- */
+* Sets the player name to the name of the boss from the config map.
+*
+* @param player       The boss player.
+* @param config       The configuration map containing the boss' name.
+* @param selector     The path to the name of the boss inside the configuration map (defaults to "boss data.name").
+*/
 stock void SetPlayerNameToBossFromConfig(const VSH2Player player, ConfigMap config, char[] selector = VSH_DEFAULT_SELECTOR_NAME) {
     int nameLength = config.GetSize(selector);
     char[] bossName = new char[nameLength];
@@ -198,33 +206,33 @@ stock void SetPlayerNameToBossFromConfig(const VSH2Player player, ConfigMap conf
 }
 
 /**
- * Plays a random sound from the config listed under the selector.
- *
- * @param player        The player being the source of the sound.
- * @param config        The configuration map containing the sounds.
- * @param selector      The path inside the config map to the sounds.
- * @param soundFlag     The flags used while playing the sound.
- */
+* Plays a random sound from the config listed under the selector.
+*
+* @param player        The player being the source of the sound.
+* @param config        The configuration map containing the sounds.
+* @param selector      The path inside the config map to the sounds.
+* @param soundFlag     The flags used while playing the sound.
+*/
 stock void PlayRandomSoundFromConfigSelector(const VSH2Player player, ConfigMap config, char[] selector, int soundFlag) {
     ConfigMap sounds = config.GetSection(selector);
     if(sounds != null) {
         PlayRandomSoundFromConfigSection(player, sounds, soundFlag);
     }
     else {
-        LOG_SELECTOR_ERROR_MESSAGE(selector);
+        LogMessage("Could not find selection under selector: %s", selector);
     }
 }
 
 /**
- * Plays a random sound from the config listed under the selector of a specific class.
- *
- * @param player            The player being the source of the sound.
- * @param class             The mercenary class determining the soundclip.
- * @param config            The configuration map containing the sounds.
- * @param selector          The path inside the config map to the sounds.
- * @param soundFlag         The flags used while playing the sound.
- * @param includeUnknown    Determines if the enumeration should start with an unknown class.
- */
+* Plays a random sound from the config listed under the selector of a specific class.
+*
+* @param player            The player being the source of the sound.
+* @param class             The mercenary class determining the soundclip.
+* @param config            The configuration map containing the sounds.
+* @param selector          The path inside the config map to the sounds.
+* @param soundFlag         The flags used while playing the sound.
+* @param includeUnknown    Determines if the enumeration should start with an unknown class.
+*/
 stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFClassType class, ConfigMap config, char[] selector, int soundFlag, bool includeUnknown = false) {
     ConfigMap classesSection = config.GetSection(selector);
     if(classesSection != null) {
@@ -240,23 +248,21 @@ stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFCla
             PlayRandomSoundFromConfigSection(player, classSection, soundFlag);
         }
         else {
-            char errorMessage[ERROR_BUFFER_SIZE];
-            FormatEx(errorMessage, ERROR_BUFFER_SIZE, "Could not find selection under selector: %s.%i", selector, view_as<int>(class)); 
-            LogMessage(errorMessage);
+            LogMessage("Could not find selection under selector: %s.%i", selector, view_as<int>(class)); 
         }
     }
     else {
-        LOG_SELECTOR_ERROR_MESSAGE(selector);
+        LogMessage("Could not find selection under selector: %s", selector);
     }
 }
 
 /**
- * Plays a random sound listed in the current section.
- *
- * @param player        The player being the source of the sound.
- * @param sounds        The configuration map containing the sounds.
- * @param soundFlag     The flags used while playing the sound.
- */
+* Plays a random sound listed in the current section.
+*
+* @param player        The player being the source of the sound.
+* @param sounds        The configuration map containing the sounds.
+* @param soundFlag     The flags used while playing the sound.
+*/
 stock void PlayRandomSoundFromConfigSection(const VSH2Player player, ConfigMap sounds, int soundFlag) {
     int soundsCount = sounds.Size;
     if(soundsCount > 0) {
@@ -270,11 +276,11 @@ stock void PlayRandomSoundFromConfigSection(const VSH2Player player, ConfigMap s
 }
 
 /**
- * Handles the player's killing streak after a kill.
- *
- * @param player     The player that killed another player.
- * @return           The number of players previously killed within 5 seconds of eachother
- */
+* Handles the player's killing streak after a kill.
+*
+* @param player     The player that killed another player.
+* @return           The number of players previously killed within 5 seconds of eachother
+*/
 stock int HandleKillingSpree(const VSH2Player player) {
     float currentTime = GetGameTime();
     if(currentTime <= player.GetPropFloat("flKillSpree")) {
@@ -292,34 +298,34 @@ stock int HandleKillingSpree(const VSH2Player player) {
 
 // TODO: document this
 /**
- * Description
- *
- * @param team     Param description
- * @return         True if only scouts are left alive.
- */
+* Description
+*
+* @param team     Param description
+* @return         True if only scouts are left alive.
+*/
 stock bool OnlyScoutsLeft(const int team)
 {
-	for( int i=MaxClients; i; --i ) {
-		if( !IsValidClient(i) || !IsPlayerAlive(i) )
-			continue;
-		else if( GetClientTeam(i) == team && TF2_GetPlayerClass(i) != TFClass_Scout )
-			return false;
-	}
-	return true;
+    for( int i=MaxClients; i; --i ) {
+        if( !IsValidClient(i) || !IsPlayerAlive(i) )
+            continue;
+        else if( GetClientTeam(i) == team && TF2_GetPlayerClass(i) != TFClass_Scout )
+            return false;
+    }
+    return true;
 }
 
 /**
- * Description
- *
- * @param client     Param description
- * @param false      Param description
- * @return           Return description
- */
+* Description
+*
+* @param client     Param description
+* @param false      Param description
+* @return           Return description
+*/
 stock bool IsValidClient(const int client, bool nobots=false)
 {
-	if( client <= 0 || client > MaxClients || !IsClientConnected(client) || (nobots && IsFakeClient(client)) )
-		return false;
-	return IsClientInGame(client);
+    if( client <= 0 || client > MaxClients || !IsClientConnected(client) || (nobots && IsFakeClient(client)) )
+        return false;
+    return IsClientInGame(client);
 }
 
 // An empty panel hint used internally when sending panels.
@@ -328,37 +334,48 @@ stock int _EmptyPanelHint(Menu menu, MenuAction action, int param1, int param2) 
 }
 
 /**
- * Gives the boss rage when hurt.
- *
- * @param 1     The boss player.
- * @param 2     The boss Id.
- * @param 3     The damage event.
- */
+* Gives the boss rage when hurt.
+*
+* @param 1     The boss player.
+* @param 2     The boss Id.
+* @param 3     The damage event.
+*/
 #define VSH_DEFAULT_CODE_ON_PLAYER_HURT(%1,%2,%3)   \
 if( !IsBossType(%1, %2) || !%1.bIsBoss) return;     \
 int damage = %3.GetInt("damageamount");             \
 %1.GiveRage(damage)
 
 /**
- * Gives the boss rage when airblasted.
- *
- * @param 1     The boss player.
- * @param 2     The boss Id.
- * @param 3     The ConVars containing rage values.
- */
+* Gives the boss rage when airblasted.
+*
+* @param 1     The boss player.
+* @param 2     The boss Id.
+* @param 3     The ConVars containing rage values.
+*/
 #define VSH_DEFAULT_CODE_ON_PLAYER_AIRBLASTED(%1,%2,%3)         \
 if( !IsBossType(%1, %2)) return;                                \
 float rage = %1.GetPropFloat("flRAGE");                         \
 %1.SetPropFloat("flRAGE", rage + %3.airblast_rage.FloatValue)
 
 /**
- * Reduces the boss' rage when jarated.
- *
- * @param 1     The boss player.
- * @param 2     The boss Id.
- * @param 3     The ConVars containing rage values.
- */
+* Reduces the boss' rage when jarated.
+*
+* @param 1     The boss player.
+* @param 2     The boss Id.
+* @param 3     The ConVars containing rage values.
+*/
 #define VSH_DEFAULT_CODE_ON_BOSS_JARATED(%1,%2,%3)              \
 if( !IsBossType(%1, %2)) return;                                \
 float rage = %1.GetPropFloat("flRAGE");                         \
 %1.SetPropFloat("flRAGE", rage - %3.jarate_rage.FloatValue);
+
+/**
+* Blocks voice lines when spoken by the boss.
+*
+* @param 1     The boss player.
+* @param 2     The boss Id.
+* @param 3     The sample.
+*/
+#define VSH_DEFAULT_CODE_ON_SOUND_HOOK(%1,%2,%3) \
+((!IsBossType(%1, %2) || !IsVoiceLine(%3)) ? Plugin_Continue : Plugin_Handled)
+
