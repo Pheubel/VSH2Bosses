@@ -1,24 +1,53 @@
 #pragma semicolon 1
 
+#include <sourcemod>
+#include <sdktools>
+#include <sdkhooks>
 #include <vsh2>
 #include "include/VSH2Utils.inc"
 #include "include/ItemAttributes.inc"
 #include "include/ItemDefinitions.inc"
 
+#define SELECTOR_TIMESCALE "boss data.timescale"
+#define SELECTOR_SLOWMOTION_DURATION "boss data.slomo duration"
+
+#define SLOMO_TIMESCALE 0.1
+#define INVERSE_SLOMO (1.0/SLOMO_TIMESCALE)
+#define DEFAULT_SLOWMOTION_DURATION 6.0
+
+#define CVAR_NAME_HOST_TIMESCALE "host_timescale"
+#define CVAR_NAME_PHYSICS_TIMESCALE "phys_timescale"
+#define SOUND_SLOWMOTION_START "replay/enterperformancemode.wav"
+
+#define PLAYER_PROPERTY_MAX_SPEED "m_flMaxspeed"
+
 int BossId;
 VSH2CVars VSH_CVars;
 ConfigMap BossConfig;
 VSH2GameMode vsh2_gm;
+ConVar cvar_TimeScale;
+bool isSlomoActive;
 
 // Set up the Ninja Spy add-on after the VSH2 library has been added.
 public void OnLibraryAdded(const char[] name) {
     if( StrEqual(name, "VSH2") ) {
         VSH_GET_CVARS(VSH_CVars);
-        BossId = VSH2_RegisterPlugin("VSH_Ninja_Spy");
+        cvar_TimeScale = FindConVar(CVAR_NAME_HOST_TIMESCALE);
+        int flags = GetConVarFlags(cvar_TimeScale);
+        SetConVarFlags(cvar_TimeScale, (flags & ~(FCVAR_CHEAT)));
+
         BossConfig = new ConfigMap("configs/saxton_hale/boss_cfgs/NinjaSpy.cfg");
+        bool isDisabled;
+        if(BossConfig == null  || (BossConfig.GetBool(VSH_DEFAULT_SELECTOR_DISABLE, isDisabled) == 0) || isDisabled) {
+            return;
+        }
+
+        BossId = VSH2_RegisterPlugin("VSH_Ninja_Spy");
         LoadHooks();
     }
 }
+
+// TODO: drop slomo when done
 
 // Load all hooks used by the Ninja Spy boss.
 void LoadHooks() {
@@ -65,6 +94,18 @@ void LoadHooks() {
     if( !VSH2_HookEx(OnBossMedicCall, HandleOnBossMedicCall)) {
         LogError("Error loading OnBossMedicCall forwards for Ninja Spy subplugin.");
     }
+
+    if( !VSH2_HookEx(OnBossDeath, HandleOnBossDeath)) {
+        LogError("Error loading OnBossDeath forwards for Ninja Spy subplugin.");
+    }
+
+    if( !VSH2_HookEx(OnBossDeath, HandleOnBossRealDeath)) {
+        LogError("Error loading OnBossDeath (real death) forwards for Ninja Spy subplugin.");
+    }
+
+    if(!VSH2_HookEx(OnSoundHook,HandleOnSoundHook)) {
+        LogError("Error loading OnSoundHook forwards for Ninja Spy subplugin.");
+    }
 }
 
 void HandleOnBossMenu(Menu& menu) {
@@ -85,6 +126,7 @@ void HandleOnBossInitialized(const VSH2Player player) {
     }
 
     SetEntProp(player.index, Prop_Send, "m_iClass", view_as<int>(TFClass_Spy));
+    player.SetPropInt("iLives", 3);
 }
 
 void HandleOnBossEquipped(const VSH2Player player) {
@@ -95,9 +137,9 @@ void HandleOnBossEquipped(const VSH2Player player) {
     SetPlayerNameToBossFromConfig(player, BossConfig, VSH_DEFAULT_SELECTOR_NAME);
     player.RemoveAllItems();
 
-    int attributeLenght = BossConfig.GetSize(VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES);
-    char[] attributeString = new char[attributeLenght];
-    BossConfig.Get(VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES, attributeString, attributeLenght);
+    int attributeLength = BossConfig.GetSize(VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES);
+    char[] attributeString = new char[attributeLength];
+    BossConfig.Get(VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES, attributeString, attributeLength);
 
     int wep = player.SpawnWeapon(TF_WEAPON_CLASS_SNIPER_MELEE_THE_SHAHANSHAH, TF_WEAPON_ID_SNIPER_MELEE_THE_SHAHANSHAH, 100, 5, attributeString);
     SetEntPropEnt(player.index, Prop_Send, "m_hActiveWeapon", wep);
@@ -187,8 +229,9 @@ void HandleOnBossMedicCall(const VSH2Player player)
     VSH2Player[] players = new VSH2Player[MaxClients];
     int in_range = player.GetPlayersInRange(players, radius);
     for( int i; i < in_range; i++ ) {
-        if( players[i].bIsBoss || players[i].bIsMinion )
+        if( players[i].bIsBoss || players[i].bIsMinion ) {
             continue;
+        }
 
         /// do a distance based thing here.
     }
@@ -196,3 +239,137 @@ void HandleOnBossMedicCall(const VSH2Player player)
     PlayRandomSoundFromConfigSelector(player, BossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_RAGE, VSH2_VOICE_RAGE);
     player.SetPropFloat("flRAGE", 0.0);
 }
+
+Action HandleOnBossDeath(const VSH2Player player) {
+    int lives = player.GetPropInt("iLives") - 1;
+
+    if(lives > 0){
+        player.SetPropInt("iLives", lives);
+        player.iHealth = player.GetPropInt("iMaxHealth");
+        return Plugin_Handled;
+    }
+
+    return Plugin_Continue;
+}
+
+void HandleOnBossRealDeath(const VSH2Player player) {
+    if( !IsBossType(player, BossId)) {
+        return;
+    }
+
+    PlayRandomSoundFromConfigSelector(player, BossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_DEATH, VSH2_VOICE_LOSE);
+}
+
+Action HandleOnSoundHook(const VSH2Player player, char sample[PLATFORM_MAX_PATH], int& channel, float& volume, int& level, int& pitch, int& flags) {
+    return VSH_DEFAULT_CODE_ON_SOUND_HOOK(player, BossId, sample);
+}
+
+// FIXME: make slowmotion feel good, it is very jittery for the client.
+void EnableSlowMotion(const VSH2Player player) {
+    if(isSlomoActive){
+        return;
+    }
+
+    isSlomoActive = true;
+
+    float timescale, slowmotionDuration;
+    timescale = SLOMO_TIMESCALE;
+    if(BossConfig.GetFloat(SELECTOR_SLOWMOTION_DURATION, slowmotionDuration) != 0) {
+        LogMessage("used 0 characters for slowmotion duration get float, using default instead.");
+        slowmotionDuration = DEFAULT_SLOWMOTION_DURATION;
+    }
+
+    player.PlayVoiceClip(SOUND_SLOWMOTION_START, VSH2_VOICE_RAGE);
+
+    SetConVarFloat(cvar_TimeScale, timescale);
+
+    // char sTimeScale[20];
+
+    // cvar_TimeScale.GetString(sTimeScale, sizeof(sTimeScale));
+
+    // for( int i=MaxClients; i; --i ) {
+    //     if( !IsValidClient(i) ) {
+    //         SetEntPropFloat(i, Prop_Send, PLAYER_PROPERTY_MAX_SPEED, GetEntPropFloat(i, Prop_Send,PLAYER_PROPERTY_MAX_SPEED) * SLOMO_TIMESCALE);
+    //     }
+    // }
+
+    any args[1];
+    args[0] = player;
+    MakePawnTimer(DisableSlowMotion, timescale * slowmotionDuration, args, sizeof(args));
+}
+
+void DisableSlowMotion(const VSH2Player player) {
+    if(!isSlomoActive){
+        return;
+    }
+
+    isSlomoActive = false;
+
+    ResetConVar(cvar_TimeScale, true, true);
+
+    // // char sTimeScale[20];
+
+    // // cvar_TimeScale.GetString(sTimeScale, sizeof(sTimeScale));
+
+    // for( int i=MaxClients; i; --i ) {
+    //     if( !IsValidClient(i) ) {
+    //         SetEntPropFloat(i, Prop_Send, PLAYER_PROPERTY_MAX_SPEED, GetEntPropFloat(i, Prop_Send,PLAYER_PROPERTY_MAX_SPEED) * INVERSE_SLOMO);
+    //     }
+    // }
+}
+
+// public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float velocity[3], float angles[3], int &weapon)
+// {
+//     if(!isSlomoActive) {
+//         return Plugin_Continue;
+//     }
+
+//     char message[128];
+//     FormatEx(message, sizeof(message), "original velocity for client %i is (%f, %f, %f)",client, velocity[0],velocity[1],velocity[2]);
+//     LogMessage(message);
+
+//     VSH2Player player =  VSH2Player(client);
+//     float position[3];
+
+//     GetEntPropVector(client, Prop_Send, "m_vecOrigin", position);
+//     ScaleVector(velocity, SLOMO_TIMESCALE);
+
+//     FormatEx(message, sizeof(message), "new velocity for client %i is (%f, %f, %f)",client, velocity[0],velocity[1],velocity[2]);
+//     LogMessage(message);
+
+//     TeleportEntity(client,NULL_VECTOR,NULL_VECTOR,velocity);
+
+//     // if( !IsBossType(player, BossId)) {
+//     //     return Plugin_Continue;
+//     // }
+
+//     // if(buttons & IN_ATTACK)
+//     // {
+//     //     FF2Flags[client]&=~FLAG_SLOWMOREADYCHANGE;
+//     //     CreateTimer(FF2_GetArgF(boss, this_plugin_name, "rage_matrix_attack", "hidden1", 3, 0.2), Timer_SlowMoChange, boss, TIMER_FLAG_NO_MAPCHANGE);
+
+//     //     float bossPosition[3], endPosition[3], eyeAngles[3];
+//     //     GetEntPropVector(client, Prop_Send, "m_vecOrigin", bossPosition);
+//     //     bossPosition[2]+=65;
+//     //     GetClientEyeAngles(client, eyeAngles);
+
+//     //     Handle trace=TR_TraceRayFilterEx(bossPosition, eyeAngles, MASK_SOLID, RayType_Infinite, TraceRayDontHitSelf);
+//     //     TR_GetEndPosition(endPosition, trace);
+//     //     endPosition[2]+=100;
+//     //     SubtractVectors(endPosition, bossPosition, velocity);
+//     //     NormalizeVector(velocity, velocity);
+//     //     ScaleVector(velocity, 2012.0);
+//     //     TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, velocity);
+//     //     int target=TR_GetEntityIndex(trace);
+//     //     if(target && target<=MaxClients)
+//     //     {
+//     //         Handle data;
+//     //         CreateDataTimer(0.15, Timer_Rage_SlowMo_Attack, data);
+//     //         WritePackCell(data, GetClientUserId(client));
+//     //         WritePackCell(data, GetClientUserId(target));
+//     //         ResetPack(data);
+//     //     }
+//     //     CloseHandle(trace);
+//     // }
+//     return Plugin_Continue;
+// }
