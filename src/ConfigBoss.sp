@@ -7,8 +7,17 @@
 #include <console>
 #include <sdkhooks>
 
+#define FORWARDED_ABILITIES_COUNT 3
+#define BUFFER_INCREMENT 32
+
 #define IS_CONFIG_BOSS(%1) (%1 >= bossIdOffset && %1 < (bossIdOffset + bossCount))
 #define GET_BOSS_CONFIG(%1) view_as<ConfigMap>(bossConfigs.Get(%1 - bossIdOffset))
+
+enum EventForwardFlag {
+    CB_OnChargeAbility = 1,
+    CB_OnRageAbility = 2,
+    CB_OnLifeLostAbility = 4
+};
 
 PrivateForward onChargeAbility;
 PrivateForward onRageAbility;
@@ -19,8 +28,7 @@ VSH2CVars vsh_cVars;
 ArrayList bossConfigs;
 int bossIdOffset = -1;
 int bossCount = 0;
-
-#define BUFFER_INCREMENT 32
+EventForwardFlag activeForwards;
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
     CreateNative("ConfigBossHookAbility", Native_ConfigBossHookAbility);
@@ -43,13 +51,6 @@ public void OnLibraryAdded(const char[] name) {
         LogMessage("config bosses are in: %s", pathBuffer);
 
         DirectoryListing directory = OpenDirectory(pathBuffer);
-
-        // // TODO: make sure if "a+" is the right mode, should be read or create
-        // File file = OpenFile(pathBuffer, "a+");
-        // if(file == null) {
-        //     LogError("Could not open %s", pathBuffer);
-        //     return;
-        // }
 
         int capacity = BUFFER_INCREMENT;
         bossConfigs = CreateArray(sizeof(ConfigMap), capacity);
@@ -335,6 +336,7 @@ void HandleOnBossJarated(const VSH2Player victim, const VSH2Player thrower) {
     victim.SetPropFloat("flRAGE", rage - vsh_cVars.jarate_rage.FloatValue);
 }
 
+// TODO: mess around with the speed think
 void HandleOnBossThink(const VSH2Player player)
 {
     int bossId = player.GetPropInt("iBossType");
@@ -358,9 +360,8 @@ void HandleOnBossThink(const VSH2Player player)
     player.SpeedThink(maxSpeed,defaultSpeed);
     player.GlowThink(0.1);
 
-    char abilityPluginName[64];
     char abilityName[MAX_ABILITY_NAME_SIZE];
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPluginName, MAX_ABILITY_NAME_SIZE) != 0) {
+    if(activeForwards & CB_OnChargeAbility) {
         Call_StartForward(onChargeAbility);
         Call_PushCell(player);
         Call_PushCell(bossConfig);
@@ -407,8 +408,7 @@ void HandleOnBossMedicCall(const VSH2Player player)
 
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
 
-    char ragePluginName[64];
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, ragePluginName, sizeof(ragePluginName)) != 0) {
+    if(activeForwards & CB_OnRageAbility) {
         LogMessage("Doing custom rage");
 
         Call_StartForward(onRageAbility);
@@ -417,8 +417,6 @@ void HandleOnBossMedicCall(const VSH2Player player)
         Call_Finish();
     }
     else {
-        LogMessage("Doing generic rage");
-
         // use ConfigMap to set how large the rage radius is
         float radius;
         if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_RAGE_DISTANCE, radius) == 0 ) {
@@ -519,171 +517,85 @@ Action HandleOnSoundHook(const VSH2Player player, char sample[PLATFORM_MAX_PATH]
 
 
 void LoadPlugins(ConfigMap bossConfig) {
-    char[] loadFormat = "sm plugins load vsh2bosses/Abilities/%s.smx";
-
-    char chargeAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
-    char rageAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
-    char lifeLostAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
+    char abilityPlugins[FORWARDED_ABILITIES_COUNT][MAX_ABILITY_PLUGIN_NAME];
     int abilityToLoad = 0;
 
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, chargeAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToLoad |= 1;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPlugins[0], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToLoad |= view_as<int>(CB_OnChargeAbility);
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, rageAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToLoad |= 2;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[1], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToLoad |= view_as<int>(CB_OnRageAbility);
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, lifeLostAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToLoad |= 4;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[2], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToLoad |= view_as<int>(CB_OnLifeLostAbility);
     }
 
-    switch(abilityToLoad) {
-        case 0: {
-            return;
+    activeForwards = view_as<EventForwardFlag>(abilityToLoad);
+
+    for(int i = 0; i < FORWARDED_ABILITIES_COUNT; ++i) {
+        // ignore entry if the ability doesnt have to load
+        if(!(abilityToLoad & (1 << i))) {
+            continue;
         }
-        case 1: {
-            ServerCommand(loadFormat, chargeAbilityPluginName);
-        }
-        case 2: {
-            ServerCommand(loadFormat, rageAbilityPluginName);
-        }
-        case 4: {
-            ServerCommand(loadFormat, rageAbilityPluginName);
-        }
-        case 3: {
-            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
+
+        bool foundDuplicate = false;
+        for(int j = 0; j < i; ++j)
+        {
+            // ignore entry if the ability doesnt have to load
+            if(!(abilityToLoad & (1 << j))) {
+                continue;
             }
-            else {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-                ServerCommand(loadFormat, rageAbilityPluginName);
-            }
-        }
-        case 5: {
-            if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-            }
-            else {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-                ServerCommand(loadFormat, lifeLostAbilityPluginName);
+
+            if(StrEqual(abilityPlugins[i], abilityPlugins[j], true)) {
+                foundDuplicate = true;
+                break;
             }
         }
-        case 6: {
-            if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(loadFormat, rageAbilityPluginName);
-            }
-            else {
-                ServerCommand(loadFormat, rageAbilityPluginName);
-                ServerCommand(loadFormat, lifeLostAbilityPluginName);
-            }
-        }
-        case 7: {
-            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                    ServerCommand(loadFormat, chargeAbilityPluginName);
-                }
-                else {
-                    ServerCommand(loadFormat, chargeAbilityPluginName);
-                    ServerCommand(loadFormat, lifeLostAbilityPluginName);
-                }
-            }
-            else if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-                ServerCommand(loadFormat, rageAbilityPluginName);
-            }
-            else if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-                ServerCommand(loadFormat, rageAbilityPluginName);
-            }
-            else {
-                ServerCommand(loadFormat, chargeAbilityPluginName);
-                ServerCommand(loadFormat, rageAbilityPluginName);
-                ServerCommand(loadFormat, lifeLostAbilityPluginName);
-            }
+
+        if(!foundDuplicate) {
+            ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", abilityPlugins[i]);
         }
     }
 }
 
 void UnloadPlugins(ConfigMap bossConfig) {
-    char[] unloadFormat = "sm plugins unload vsh2bosses/Abilities/%s.smx";
+    char abilityPlugins[FORWARDED_ABILITIES_COUNT][MAX_ABILITY_PLUGIN_NAME];
+    int abilityToUnload = 0;
 
-    char chargeAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
-    char rageAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
-    char lifeLostAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
-    int abilityToLoad = 0;
-
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, chargeAbilityPluginName, sizeof(chargeAbilityPluginName)) != 0) {
-        abilityToLoad |= 1;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPlugins[0], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToUnload |= view_as<int>(CB_OnChargeAbility);
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, rageAbilityPluginName, sizeof(rageAbilityPluginName)) != 0) {
-        abilityToLoad |= 2;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[1], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToUnload |= view_as<int>(CB_OnRageAbility);
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN, lifeLostAbilityPluginName, sizeof(lifeLostAbilityPluginName)) != 0) {
-        abilityToLoad |= 4;
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN, abilityPlugins[2], MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToUnload |= view_as<int>(CB_OnLifeLostAbility);
     }
 
-    switch(abilityToLoad) {
-        case 0: {
-            return;
+    activeForwards = view_as<EventForwardFlag>(0);
+
+    for(int i = 0; i < FORWARDED_ABILITIES_COUNT; ++i) {
+        // ignore entry if the ability doesnt have to load
+        if(!(abilityToUnload & (1 << i))) {
+            continue;
         }
-        case 1: {
-            ServerCommand(unloadFormat, chargeAbilityPluginName);
-        }
-        case 2: {
-            ServerCommand(unloadFormat, rageAbilityPluginName);
-        }
-        case 4: {
-            ServerCommand(unloadFormat, rageAbilityPluginName);
-        }
-        case 3: {
-            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
+
+        bool foundDuplicate = false;
+        for(int j = 0; j < i; ++j)
+        {
+            // ignore entry if the ability doesnt have to load
+            if(!(abilityToUnload & (1 << j))) {
+                continue;
             }
-            else {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-            }
-        }
-        case 5: {
-            if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-            }
-            else {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
+
+            if(StrEqual(abilityPlugins[i], abilityPlugins[j], true)) {
+                foundDuplicate = true;
+                break;
             }
         }
-        case 6: {
-            if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-            }
-            else {
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
-            }
-        }
-        case 7: {
-            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                    ServerCommand(unloadFormat, chargeAbilityPluginName);
-                }
-                else {
-                    ServerCommand(unloadFormat, chargeAbilityPluginName);
-                    ServerCommand(unloadFormat, lifeLostAbilityPluginName);
-                }
-            }
-            else if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-            }
-            else if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-            }
-            else {
-                ServerCommand(unloadFormat, chargeAbilityPluginName);
-                ServerCommand(unloadFormat, rageAbilityPluginName);
-                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
-            }
+
+        if(!foundDuplicate) {
+            ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", abilityPlugins[i]);
         }
     }
 }
