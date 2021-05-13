@@ -2,22 +2,29 @@
 
 #include <vsh2>
 
-#define CHARACTER_CONFIG_FILE_PATH "configs/saxton_hale/boss_cfgs/configCharacters.cfg"
+#define MAX_ABILITY_NAME_SIZE 32
+#define MAX_ABILITY_PLUGIN_NAME 64
 
 #define MINIMAL_STREAK_FOR_SPREE 3
 #define DEFAULT_SPEED 100.0
 #define DEFAULT_MAX_SPEED 340.0
 #define DEFAULT_RAGE_RADIUS 300.0
 
-// ability callback types
-enum AbilityCallbackType {
+// event callback types
+enum CallbackType {
     OnChargeAbility = 0,
-    OnRageAbility
+    OnRageAbility,
+    OnLifeLost
 };
 
-typeset CBAbilityHookCB {
-    function void (const VSH2Player player, const ConfigMap bossConfig);
-    function Action (const VSH2Player player, const ConfigMap bossConfig);
+typeset CBEventHookCB {
+    // OnChargeAbility
+    // OnRageAbility
+    function void (const VSH2Player bossPlayer, const ConfigMap bossConfig);
+
+    // OnLifeLost
+    function void (const VSH2Player bossPlayer, const VSH2Player attacker, const ConfigMap bossConfig);
 };
 
-native bool ConfigBossHookAbility(const AbilityCallbackType callbackType, CBAbilityHookCB callback);
+native bool ConfigBossHookAbility(const CallbackType callbackType, CBEventHookCB callback);
+native bool IsConfigBoss(VSH2Player bossPlayer);

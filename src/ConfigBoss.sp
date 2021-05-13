@@ -5,12 +5,14 @@
 #include <vsh2>
 #include <files>
 #include <console>
+#include <sdkhooks>
 
-#define IS_CONFIG_BOSS(%1) (%1 >= bossIdOffset || %1 < (bossIdOffset + bossCount))
+#define IS_CONFIG_BOSS(%1) (%1 >= bossIdOffset && %1 < (bossIdOffset + bossCount))
 #define GET_BOSS_CONFIG(%1) view_as<ConfigMap>(bossConfigs.Get(%1 - bossIdOffset))
 
 PrivateForward onChargeAbility;
 PrivateForward onRageAbility;
+PrivateForward onLifeLost;
 
 VSH2GameMode vsh2_gm;
 VSH2CVars vsh_cVars;
@@ -22,11 +24,13 @@ int bossCount = 0;
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
     CreateNative("ConfigBossHookAbility", Native_ConfigBossHookAbility);
+    CreateNative("IsConfigBoss", Native_IsConfigBoss);
 }
 
 public void OnPluginStart() {
     onChargeAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
     onRageAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
+    onLifeLost = CreateForward(ET_Event, Param_Cell, Param_Cell, Param_Cell);
 }
 
 public void OnLibraryAdded(const char[] name) {
@@ -34,28 +38,41 @@ public void OnLibraryAdded(const char[] name) {
         VSH_GET_CVARS(vsh_cVars);
 
         char pathBuffer[PLATFORM_MAX_PATH];
-        BuildPath(Path_SM, pathBuffer,PLATFORM_MAX_PATH, CHARACTER_CONFIG_FILE_PATH);
+        BuildPath(Path_SM, pathBuffer,PLATFORM_MAX_PATH, "configs/saxton_hale/boss_cfgs/configCharacters");
+        CreateDirectory(pathBuffer, FPERM_U_READ | FPERM_U_WRITE | FPERM_U_EXEC);
+        LogMessage("config bosses are in: %s", pathBuffer);
 
-        // TODO: make sure if "a+" is the right mode, should be read or create
-        File file = OpenFile(pathBuffer, "a+");
-        if(file == null) {
-            LogError("Could not open %s", pathBuffer);
-            return;
-        }
+        DirectoryListing directory = OpenDirectory(pathBuffer);
+
+        // // TODO: make sure if "a+" is the right mode, should be read or create
+        // File file = OpenFile(pathBuffer, "a+");
+        // if(file == null) {
+        //     LogError("Could not open %s", pathBuffer);
+        //     return;
+        // }
 
         int capacity = BUFFER_INCREMENT;
         bossConfigs = CreateArray(sizeof(ConfigMap), capacity);
 
         char pluginNameBuffer[64];
         char configPathBuffer[PLATFORM_MAX_PATH];
-        while(file.ReadLine(pathBuffer, PLATFORM_MAX_PATH))
+        FileType fileType;
+        while(directory.GetNext(pathBuffer, PLATFORM_MAX_PATH, fileType))
         {
-            BuildPath(Path_SM, configPathBuffer, PLATFORM_MAX_PATH, "configs/saxton_hale/boss_cfgs/CharacterConfigs/%s", pathBuffer);
+            if(fileType != FileType_File) {
+                continue;
+            }
+
+            FormatEx(configPathBuffer, PLATFORM_MAX_PATH, "configs/saxton_hale/boss_cfgs/configCharacters/%s", pathBuffer);
+
+            //BuildPath(Path_SM, configPathBuffer, PLATFORM_MAX_PATH, "configs/saxton_hale/boss_cfgs/CharacterConfigs/%s", pathBuffer);
             ConfigMap cfg = new ConfigMap(configPathBuffer);
             if(cfg == null) {
                 LogMessage("Cannot load config file: %s",pathBuffer);
                 continue;
             }
+
+            LogMessage("loaded config file \"%s\" (handle:%i)",pathBuffer, cfg);
 
             bool isDisabled = false;
             if(cfg.GetBool(VSH_DEFAULT_SELECTOR_DISABLE, isDisabled) == 0 || isDisabled) {
@@ -72,13 +89,16 @@ public void OnLibraryAdded(const char[] name) {
             int bossId = VSH2_RegisterPlugin(pluginNameBuffer);
 
             if(bossIdOffset == -1) {
+                LogMessage("Setting the bossId offset: %i", bossId);
                 bossIdOffset = bossId;
             }
 
-            bossConfigs.Push(cfg);
+            bossConfigs.Set(bossCount - 1,cfg);
         }
 
-        file.Close();
+        directory.Close();
+
+        LogMessage("config boss count: %i", bossCount);
 
         if(bossCount != 0) {
             bossConfigs.Resize(bossCount);
@@ -140,11 +160,6 @@ void LoadHooks() {
         LogError("Error loading OnBossDeath forwards for Config Boss subplugin.");
     }
 
-    // TODO: do stuff here when lives are working
-    // if( !VSH2_HookEx(OnBossDeath, HandleOnBossRealDeath)) {
-    //     LogError("Error loading OnBossDeath (real death) forwards for Config Boss subplugin.");
-    // }
-
     if( !VSH2_HookEx(OnRoundEndInfo, HandleOnRoundEnd)) {
         LogError("Error loading OnRoundEndInfo forwards for Config Boss subplugin.");
     }
@@ -160,10 +175,12 @@ void HandleOnCallDownloads() {
 
 void HandleOnBossMenu(Menu& menu) {
     ConfigMap bossConfig;
-    for(int i = 0; i <= bossCount; i++)
+    for(int i = 0; i < bossCount; i++)
     {
         bossConfig = view_as<ConfigMap>(bossConfigs.Get(i));
-        AddBossToMenuFromConfig(menu, bossIdOffset + i, bossConfig);
+        if(!AddBossToMenuFromConfig(menu, bossIdOffset + i, bossConfig)) {
+            LogMessage("Config boss %i could not set a menu name, missing \"menu name\"/\"name\" field", i );
+        }
     }
 }
 
@@ -185,10 +202,14 @@ void HandleOnBossInitialized(const VSH2Player player) {
         return;
     }
 
+    if(!SDKHookEx(player.index,SDKHook_OnTakeDamageAlive, HandleOnBossTakeDamage)) {
+        LogError("Error loading OnBossTakeDamage forwards for Config Boss subplugin.");
+    }
+
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
 
     int value;
-    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_CLASS, value)) {
+    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_CLASS, value) == 0) {
         value = view_as<int>(TFClass_Scout);
         LogMessage("Could not load value from \"%s\". Defaulting to Scout (%i)", VSH_DEFAULT_SELECTOR_CLASS, value);
     }
@@ -196,8 +217,7 @@ void HandleOnBossInitialized(const VSH2Player player) {
 
     if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_LIVES, value) != 0) {
         LogMessage("Lives are currently not supported.");
-        // TODO: implement lives
-        // player.SetPropInt("iLives", value);
+        player.SetPropInt("iLives", value);
     }
 
     LoadPlugins(bossConfig);
@@ -218,7 +238,7 @@ void HandleOnBossEquipped(const VSH2Player player) {
 
     int weaponClassLength = bossConfig.GetSize(VSH_DEFAULT_SELECTOR_WEAPON_CLASS);
     char[] weaponClassString = new char[weaponClassLength];
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_WEAPON_CLASS, weaponClassString, weaponClassLength)) {
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_WEAPON_CLASS, weaponClassString, weaponClassLength) == 0) {
         int name_len = bossConfig.GetSize(VSH_DEFAULT_SELECTOR_MENU_NAME);
         char[] name = new char[name_len];
         bossConfig.Get(VSH_DEFAULT_SELECTOR_MENU_NAME, name, name_len);
@@ -227,7 +247,7 @@ void HandleOnBossEquipped(const VSH2Player player) {
     }
 
     int weaponId;
-    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_WEAPON_ID, weaponId)) {
+    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_WEAPON_ID, weaponId) == 0) {
         int name_len = bossConfig.GetSize(VSH_DEFAULT_SELECTOR_MENU_NAME);
         char[] name = new char[name_len];
         bossConfig.Get(VSH_DEFAULT_SELECTOR_MENU_NAME, name, name_len);
@@ -327,11 +347,11 @@ void HandleOnBossThink(const VSH2Player player)
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
 
     float defaultSpeed, maxSpeed;
-    if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_MOVE_SPEED, defaultSpeed) == 0){
-        defaultSpeed = DEFAULT_SPEED;
-    }
+    //if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_MOVE_SPEED, defaultSpeed) == 0){
+    defaultSpeed = DEFAULT_SPEED;
+    //}
 
-    if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_MAX_SPEED, defaultSpeed) == 0){
+    if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_MOVE_SPEED, defaultSpeed) == 0){
         maxSpeed = DEFAULT_MAX_SPEED;
     }
 
@@ -339,12 +359,16 @@ void HandleOnBossThink(const VSH2Player player)
     player.GlowThink(0.1);
 
     char abilityPluginName[64];
-    char abilityName[32] = "Ability";
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPluginName, sizeof(abilityPluginName)) == 0) {
+    char abilityName[MAX_ABILITY_NAME_SIZE];
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPluginName, MAX_ABILITY_NAME_SIZE) != 0) {
         Call_StartForward(onChargeAbility);
         Call_PushCell(player);
         Call_PushCell(bossConfig);
         Call_Finish();
+
+        if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME, abilityName, MAX_ABILITY_NAME_SIZE) == 0) {
+            abilityName = "Ability";
+        }
     }
     else {
         abilityName = "Jump";
@@ -384,16 +408,22 @@ void HandleOnBossMedicCall(const VSH2Player player)
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
 
     char ragePluginName[64];
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, ragePluginName, sizeof(ragePluginName)) == 0) {
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, ragePluginName, sizeof(ragePluginName)) != 0) {
+        LogMessage("Doing custom rage");
+
         Call_StartForward(onRageAbility);
         Call_PushCell(player);
         Call_PushCell(bossConfig);
         Call_Finish();
     }
     else {
+        LogMessage("Doing generic rage");
+
         // use ConfigMap to set how large the rage radius is
-        float radius = DEFAULT_RAGE_RADIUS;
-        bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_RAGE_DISTANCE, radius);
+        float radius;
+        if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_RAGE_DISTANCE, radius) == 0 ) {
+            radius = DEFAULT_RAGE_RADIUS;
+        }
 
         player.DoGenericStun(radius);
         VSH2Player[] players = new VSH2Player[MaxClients];
@@ -407,6 +437,44 @@ void HandleOnBossMedicCall(const VSH2Player player)
 
     PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_RAGE, VSH2_VOICE_RAGE);
     player.SetPropFloat("flRAGE", 0.0);
+}
+
+// TODO: make sure this works
+Action HandleOnBossTakeDamage(int victim, int& attacker, int& inflictor, float& damage, int& damagetype, int& weapon, float damageForce[3], float damagePosition[3], int damagecustom) {
+    VSH2Player player = VSH2Player(victim);
+    int bossId = player.GetPropInt("iBossType");
+
+    // check not needed since check has been done when initializing the boss
+    // if(!IS_CONFIG_BOSS(bossId)) {
+    //     return Plugin_Continue;
+    // }
+
+    if((float(player.iHealth) - damage) > 0.0) {
+        return Plugin_Continue;
+    }
+
+    int lives = player.GetPropInt("iLives") - 1;
+
+    // check if boss lost last life
+    if(lives <= 0) {
+        return Plugin_Continue;
+    }
+
+    damage = 0.0;
+    player.SetPropInt("iLives", lives);
+    player.iHealth = player.GetPropInt("iMaxHealth");
+
+    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+
+    PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_LIFE_LOST, VSH2_VOICE_RAGE);
+
+    Call_StartForward(onLifeLost);
+    Call_PushCell(player);
+    Call_PushCell(attacker);
+    Call_PushCell(bossConfig);
+    Call_Finish();
+
+    return Plugin_Handled;
 }
 
 void HandleOnBossDeath(const VSH2Player player) {
@@ -428,6 +496,8 @@ void HandleOnRoundEnd(const VSH2Player player, bool bossBool, char message[MAXME
         return;
     }
 
+    SDKUnhook(player.index,SDKHook_OnTakeDamageAlive, HandleOnBossTakeDamage);
+
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
 
     if(bossBool) {
@@ -447,16 +517,23 @@ Action HandleOnSoundHook(const VSH2Player player, char sample[PLATFORM_MAX_PATH]
     return Plugin_Handled;
 }
 
+
 void LoadPlugins(ConfigMap bossConfig) {
-    char chargeAbilityPluginName[64];
-    char rageAbilityPluginName[64];
+    char[] loadFormat = "sm plugins load vsh2bosses/Abilities/%s.smx";
+
+    char chargeAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
+    char rageAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
+    char lifeLostAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
     int abilityToLoad = 0;
 
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, chargeAbilityPluginName, sizeof(chargeAbilityPluginName)) != 0) {
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, chargeAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
         abilityToLoad |= 1;
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, rageAbilityPluginName, sizeof(rageAbilityPluginName)) != 0) {
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, rageAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
         abilityToLoad |= 2;
+    }
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, lifeLostAbilityPluginName, MAX_ABILITY_PLUGIN_NAME) != 0) {
+        abilityToLoad |= 4;
     }
 
     switch(abilityToLoad) {
@@ -464,26 +541,74 @@ void LoadPlugins(ConfigMap bossConfig) {
             return;
         }
         case 1: {
-            ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
+            ServerCommand(loadFormat, chargeAbilityPluginName);
         }
         case 2: {
-            ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", rageAbilityPluginName);
+            ServerCommand(loadFormat, rageAbilityPluginName);
+        }
+        case 4: {
+            ServerCommand(loadFormat, rageAbilityPluginName);
         }
         case 3: {
             if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
+                ServerCommand(loadFormat, chargeAbilityPluginName);
             }
             else {
-                ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
-                ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", rageAbilityPluginName);
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+                ServerCommand(loadFormat, rageAbilityPluginName);
+            }
+        }
+        case 5: {
+            if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+            }
+            else {
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+                ServerCommand(loadFormat, lifeLostAbilityPluginName);
+            }
+        }
+        case 6: {
+            if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(loadFormat, rageAbilityPluginName);
+            }
+            else {
+                ServerCommand(loadFormat, rageAbilityPluginName);
+                ServerCommand(loadFormat, lifeLostAbilityPluginName);
+            }
+        }
+        case 7: {
+            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
+                if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                    ServerCommand(loadFormat, chargeAbilityPluginName);
+                }
+                else {
+                    ServerCommand(loadFormat, chargeAbilityPluginName);
+                    ServerCommand(loadFormat, lifeLostAbilityPluginName);
+                }
+            }
+            else if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+                ServerCommand(loadFormat, rageAbilityPluginName);
+            }
+            else if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+                ServerCommand(loadFormat, rageAbilityPluginName);
+            }
+            else {
+                ServerCommand(loadFormat, chargeAbilityPluginName);
+                ServerCommand(loadFormat, rageAbilityPluginName);
+                ServerCommand(loadFormat, lifeLostAbilityPluginName);
             }
         }
     }
 }
 
 void UnloadPlugins(ConfigMap bossConfig) {
-    char chargeAbilityPluginName[64];
-    char rageAbilityPluginName[64];
+    char[] unloadFormat = "sm plugins unload vsh2bosses/Abilities/%s.smx";
+
+    char chargeAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
+    char rageAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
+    char lifeLostAbilityPluginName[MAX_ABILITY_PLUGIN_NAME];
     int abilityToLoad = 0;
 
     if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, chargeAbilityPluginName, sizeof(chargeAbilityPluginName)) != 0) {
@@ -492,31 +617,79 @@ void UnloadPlugins(ConfigMap bossConfig) {
     if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, rageAbilityPluginName, sizeof(rageAbilityPluginName)) != 0) {
         abilityToLoad |= 2;
     }
+    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN, lifeLostAbilityPluginName, sizeof(lifeLostAbilityPluginName)) != 0) {
+        abilityToLoad |= 4;
+    }
 
     switch(abilityToLoad) {
         case 0: {
             return;
         }
         case 1: {
-            ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
+            ServerCommand(unloadFormat, chargeAbilityPluginName);
         }
         case 2: {
-            ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", rageAbilityPluginName);
+            ServerCommand(unloadFormat, rageAbilityPluginName);
+        }
+        case 4: {
+            ServerCommand(unloadFormat, rageAbilityPluginName);
         }
         case 3: {
             if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
-                ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
             }
             else {
-                ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", chargeAbilityPluginName);
-                ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", rageAbilityPluginName);
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+            }
+        }
+        case 5: {
+            if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+            }
+            else {
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
+            }
+        }
+        case 6: {
+            if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+            }
+            else {
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
+            }
+        }
+        case 7: {
+            if(StrEqual(chargeAbilityPluginName, rageAbilityPluginName, true)) {
+                if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                    ServerCommand(unloadFormat, chargeAbilityPluginName);
+                }
+                else {
+                    ServerCommand(unloadFormat, chargeAbilityPluginName);
+                    ServerCommand(unloadFormat, lifeLostAbilityPluginName);
+                }
+            }
+            else if(StrEqual(chargeAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+            }
+            else if(StrEqual(rageAbilityPluginName, lifeLostAbilityPluginName, true)) {
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+            }
+            else {
+                ServerCommand(unloadFormat, chargeAbilityPluginName);
+                ServerCommand(unloadFormat, rageAbilityPluginName);
+                ServerCommand(unloadFormat, lifeLostAbilityPluginName);
             }
         }
     }
 }
 
 Native_ConfigBossHookAbility(Handle plugin, int numParams) {
-    AbilityCallbackType hook = GetNativeCell(1);
+    CallbackType hook = GetNativeCell(1);
     Function func = GetNativeFunction(2);
     switch (hook) {
         case OnChargeAbility: {
@@ -528,4 +701,11 @@ Native_ConfigBossHookAbility(Handle plugin, int numParams) {
     }
 
     return 0;
+}
+
+Native_IsConfigBoss(Handle plugin, int numParams) {
+    VSH2Player bossPlayer = GetNativeCell(1);
+    int bossId = bossPlayer.GetPropInt("iBossType");
+
+    return IS_CONFIG_BOSS(bossId);
 }

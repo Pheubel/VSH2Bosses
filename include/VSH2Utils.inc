@@ -16,6 +16,7 @@
 #define VSH_DEFAULT_SELECTOR_SOUNDS_SPREE "boss data.sounds.spree"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_LAST_GUY "boss data.sounds.last guy"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_WIN "boss data.sounds.win"
+#define VSH_DEFAULT_SELECTOR_SOUNDS_LIFE_LOST "boss data.sounds.life lost"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_DEATH "boss data.sounds.death"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_MUSIC "boss data.sounds.music"
 #define VSH_DEFAULT_SELECTOR_MENU_NAME "boss data.menu name"
@@ -25,17 +26,20 @@
 #define VSH_DEFAULT_SELECTOR_SKINS "boss data.skins"
 #define VSH_DEFAULT_SELECTOR_RAGE_DISTANCE "boss data.rage dist"
 #define VSH_DEFAULT_SELECTOR_MOVE_SPEED "boss data.move speed"
-#define VSH_DEFAULT_SELECTOR_MAX_SPEED "boss data.max speed"
+// #define VSH_DEFAULT_SELECTOR_MAX_SPEED "boss data.max speed"  //TODO: check if speed think actually ramps up to this
 #define VSH_DEFAULT_SELECTOR_WEAPON_ATTRIBUTES "boss data.attribs"
 #define VSH_DEFAULT_SELECTOR_WEAPON_CLASS "boss data.weapon class"
 #define VSH_DEFAULT_SELECTOR_WEAPON_ID "boss data.weapon id"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY "boss data.charge ability"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME "boss data.charge ability.name"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN "boss data.charge ability.plugin"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS "boss data.charge ability.arguments"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY "boss data.rage ability"
-#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_NAME "boss data.rage ability.name"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN "boss data.rage ability.plugin"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_ARGUMENTS "boss data.rage ability.arguments"
+#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY "boss data.life ability"
+#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN "boss data.life ability.plugin"
+#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_ARGUMENTS "boss data.life ability.arguments"
 
 #define ERROR_BUFFER_SIZE 256
 
@@ -70,14 +74,14 @@ stock int AttributesToString(ItemAttribute[] attributes, int attributeCount, cha
         bytesWritten += StrCat(buffer, bufferSize, idString);
         bytesWritten += StrCat(buffer, bufferSize, ";");
         bytesWritten += StrCat(buffer, bufferSize, attributes[i].value);
-        
+
         if(i != attributeCount) {
             bytesWritten += StrCat(buffer, bufferSize, ";");
         }
     }
 
     return bytesWritten;
-} 
+}
 
 /**
 * Finds the ConVars commonly used in VSH2 bosses.
@@ -119,7 +123,7 @@ stock bool IsBossType(const VSH2Player player, int bossId) {
 * @param name       The name to appear in the selection menu.
 */
 stock void AddBossToMenu(Menu& menu, int bossId, const char[] name) {
-    char tostr[10]; 
+    char tostr[10];
     IntToString(bossId, tostr, sizeof(tostr));
 
     menu.AddItem(tostr, name);
@@ -132,16 +136,29 @@ stock void AddBossToMenu(Menu& menu, int bossId, const char[] name) {
 * @param bossId     The Id of the boss to be put in the menu.
 * @param config     The configuration map containing the boss' menu name.
 * @param selector   The path to the menu name inside the configuration map (defaults to "boss data.name").
+* @return           True if the boss was succesfully added to the menu.
 */
-stock void AddBossToMenuFromConfig(Menu& menu, int bossId, ConfigMap config, char selector[PLATFORM_MAX_PATH] = VSH_DEFAULT_SELECTOR_MENU_NAME) {
-    char tostr[10]; 
+stock bool AddBossToMenuFromConfig(Menu& menu, int bossId, ConfigMap config, char selector[PLATFORM_MAX_PATH] = VSH_DEFAULT_SELECTOR_MENU_NAME, char fallbackSelector[PLATFORM_MAX_PATH] = VSH_DEFAULT_SELECTOR_NAME) {
+    char tostr[10];
     IntToString(bossId, tostr, sizeof(tostr));
-    
+
     /// ConfigMap can be used to store the boss name.
-    int name_len = config.GetSize(selector);
-    char[] name = new char[name_len];
-    config.Get(selector, name, name_len);
-    menu.AddItem(tostr, name);
+    int menuNameLength = config.GetSize(selector);
+    char[] menuName = new char[menuNameLength];
+    if(config.Get(selector, menuName, menuNameLength) != 0) {
+        menu.AddItem(tostr, menuName);
+        return true;
+    }
+
+    // if no menu name was found, fall back to name
+    int nameLength = config.GetSize(fallbackSelector);
+    char[] name = new char[nameLength];
+    if(config.Get(fallbackSelector, name, nameLength) != 0) {
+        menu.AddItem(tostr, name);
+        return true;
+    }
+
+    return false;
 }
 
 /**
@@ -246,9 +263,6 @@ stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFCla
         ConfigMap classSection = classSection.GetIntSection(key);
         if(classSection != null){
             PlayRandomSoundFromConfigSection(player, classSection, soundFlag);
-        }
-        else {
-            LogMessage("Could not find selection under selector: %s.%i", selector, view_as<int>(class)); 
         }
     }
     else {
