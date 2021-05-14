@@ -20,11 +20,12 @@ enum CallbackType {
 typeset CBEventHookCB {
     // OnChargeAbility
     // OnRageAbility
-    function void (const VSH2Player bossPlayer, const ConfigMap bossConfig);
+    function void (const VSH2Player bossPlayer);
 
     // OnLifeLost
-    function void (const VSH2Player bossPlayer, const VSH2Player attacker, const ConfigMap bossConfig);
+    function void (const VSH2Player bossPlayer, const VSH2Player attacker);
 };
 
 native bool ConfigBossHookAbility(const CallbackType callbackType, CBEventHookCB callback);
 native bool IsConfigBoss(VSH2Player bossPlayer);
+native ConfigMap CloneBossConfigMap();

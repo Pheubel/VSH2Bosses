@@ -2,13 +2,17 @@
 
 #include "include/VSH2Utils.inc"
 #include "include/ConfigBoss.inc"
+#include "formula_parser.sp"
 #include <vsh2>
 #include <files>
 #include <console>
 #include <sdkhooks>
 
+#define SELECTOR_HEALTH_FORMULA "boss data.health formula"
+
 #define FORWARDED_ABILITIES_COUNT 3
 #define BUFFER_INCREMENT 32
+#define MAX_FORMULA_SIZE 64
 
 #define IS_CONFIG_BOSS(%1) (%1 >= bossIdOffset && %1 < (bossIdOffset + bossCount))
 #define GET_BOSS_CONFIG(%1) view_as<ConfigMap>(bossConfigs.Get(%1 - bossIdOffset))
@@ -28,11 +32,13 @@ VSH2CVars vsh_cVars;
 ArrayList bossConfigs;
 int bossIdOffset = -1;
 int bossCount = 0;
+ConfigMap currentBossConfig;
 EventForwardFlag activeForwards;
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
     CreateNative("ConfigBossHookAbility", Native_ConfigBossHookAbility);
     CreateNative("IsConfigBoss", Native_IsConfigBoss);
+    CreateNative("CloneBossConfigMap", Native_CloneBossConfigMap);
 }
 
 public void OnPluginStart() {
@@ -121,8 +127,12 @@ void LoadHooks() {
         LogError("Error loading OnBossSelected forwards for Config Boss subplugin.");
     }
 
+    if( !VSH2_HookEx(OnBossCalcHealth, HandleOnBossCalculateHealth)) {
+        LogError("Error loading OnBossSelected forwards for Config Boss subplugin.");
+    }
+
     if( !VSH2_HookEx(OnBossInitialized, HandleOnBossInitialized)) {
-        LogError("Error loading OnBossInitialized forwards for Config Boss subplugin.");
+        LogError("Error loading OnBossCalcHealth forwards for Config Boss subplugin.");
     }
 
     if( !VSH2_HookEx(OnBossEquipped, HandleOnBossEquipped)) {
@@ -168,6 +178,10 @@ void LoadHooks() {
     if(!VSH2_HookEx(OnSoundHook,HandleOnSoundHook)) {
         LogError("Error loading OnSoundHook forwards for Config Boss subplugin.");
     }
+
+    if( !VSH2_HookEx(OnMessageIntro, HandleOnMessageIntro)) {
+        LogError("Error loading OnMessageIntro forwards for Config Boss subplugin.");
+    }
 }
 
 void HandleOnCallDownloads() {
@@ -193,7 +207,27 @@ void HandleOnBossSelected(const VSH2Player player) {
     }
 
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    currentBossConfig = bossConfig;
     SetPanelMessageFromConfig(player, bossConfig);
+}
+
+void HandleOnBossCalculateHealth(const VSH2Player player, int& max_health, const int boss_count, const int red_players) {
+    int bossId = player.GetPropInt("iBossType");
+
+    if(!IS_CONFIG_BOSS(bossId)) {
+        return;
+    }
+
+    char formula[MAX_FORMULA_SIZE];
+    if(currentBossConfig.Get(SELECTOR_HEALTH_FORMULA,formula, MAX_FORMULA_SIZE)) {
+        max_health = RoundToFloor(ParseFormula(formula, boss_count + red_players));
+    }
+
+    int lives;
+    if(currentBossConfig.GetInt(VSH_DEFAULT_SELECTOR_LIVES, lives)) {
+        player.SetPropInt("iLives", lives);
+        player.SetPropInt("iMaxLives", lives);
+    }
 }
 
 void HandleOnBossInitialized(const VSH2Player player) {
@@ -207,19 +241,14 @@ void HandleOnBossInitialized(const VSH2Player player) {
         LogError("Error loading OnBossTakeDamage forwards for Config Boss subplugin.");
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
-    int value;
-    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_CLASS, value) == 0) {
-        value = view_as<int>(TFClass_Scout);
-        LogMessage("Could not load value from \"%s\". Defaulting to Scout (%i)", VSH_DEFAULT_SELECTOR_CLASS, value);
+    int classId;
+    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_CLASS, classId) == 0) {
+        classId = view_as<int>(TFClass_Scout);
+        LogMessage("Could not load value from \"%s\". Defaulting to Scout (%i)", VSH_DEFAULT_SELECTOR_CLASS, classId);
     }
-    SetEntProp(player.index, Prop_Send, "m_iClass", value);
-
-    if(bossConfig.GetInt(VSH_DEFAULT_SELECTOR_LIVES, value) != 0) {
-        LogMessage("Lives are currently not supported.");
-        player.SetPropInt("iLives", value);
-    }
+    SetEntProp(player.index, Prop_Send, "m_iClass", classId);
 
     LoadPlugins(bossConfig);
 }
@@ -231,7 +260,7 @@ void HandleOnBossEquipped(const VSH2Player player) {
         return;
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     SetPlayerNameToBossFromConfig(player, bossConfig, VSH_DEFAULT_SELECTOR_NAME);
 
@@ -278,7 +307,7 @@ void HandleOnBossPlayIntro(const VSH2Player player) {
         return;
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_INTROS, VSH2_VOICE_INTRO);
 }
@@ -346,7 +375,7 @@ void HandleOnBossThink(const VSH2Player player)
         return;
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     float defaultSpeed, maxSpeed;
     //if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_MOVE_SPEED, defaultSpeed) == 0){
@@ -364,7 +393,6 @@ void HandleOnBossThink(const VSH2Player player)
     if(activeForwards & CB_OnChargeAbility) {
         Call_StartForward(onChargeAbility);
         Call_PushCell(player);
-        Call_PushCell(bossConfig);
         Call_Finish();
 
         if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME, abilityName, MAX_ABILITY_NAME_SIZE) == 0) {
@@ -402,18 +430,19 @@ void HandleOnBossMedicCall(const VSH2Player player)
 {
     int bossId = player.GetPropInt("iBossType");
 
-    if( !IS_CONFIG_BOSS(bossId) || player.GetPropFloat("flRAGE") < 100.0) {
+    if( !IS_CONFIG_BOSS(bossId) ){//|| player.GetPropFloat("flRAGE") < 100.0) {
         return;
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
+
+    LogMessage("Config Boss config handle: %i", bossConfig);
 
     if(activeForwards & CB_OnRageAbility) {
         LogMessage("Doing custom rage");
 
         Call_StartForward(onRageAbility);
         Call_PushCell(player);
-        Call_PushCell(bossConfig);
         Call_Finish();
     }
     else {
@@ -440,7 +469,7 @@ void HandleOnBossMedicCall(const VSH2Player player)
 // TODO: make sure this works
 Action HandleOnBossTakeDamage(int victim, int& attacker, int& inflictor, float& damage, int& damagetype, int& weapon, float damageForce[3], float damagePosition[3], int damagecustom) {
     VSH2Player player = VSH2Player(victim);
-    int bossId = player.GetPropInt("iBossType");
+    //int bossId = player.GetPropInt("iBossType");
 
     // check not needed since check has been done when initializing the boss
     // if(!IS_CONFIG_BOSS(bossId)) {
@@ -462,14 +491,13 @@ Action HandleOnBossTakeDamage(int victim, int& attacker, int& inflictor, float& 
     player.SetPropInt("iLives", lives);
     player.iHealth = player.GetPropInt("iMaxHealth");
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_LIFE_LOST, VSH2_VOICE_RAGE);
 
     Call_StartForward(onLifeLost);
     Call_PushCell(player);
     Call_PushCell(attacker);
-    Call_PushCell(bossConfig);
     Call_Finish();
 
     return Plugin_Handled;
@@ -482,7 +510,7 @@ void HandleOnBossDeath(const VSH2Player player) {
         return;
     }
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_DEATH, VSH2_VOICE_LOSE);
 }
@@ -496,13 +524,15 @@ void HandleOnRoundEnd(const VSH2Player player, bool bossBool, char message[MAXME
 
     SDKUnhook(player.index,SDKHook_OnTakeDamageAlive, HandleOnBossTakeDamage);
 
-    ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
+    ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
 
     if(bossBool) {
         PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_WIN, VSH2_VOICE_LOSE);
     }
 
     UnloadPlugins(bossConfig);
+
+    currentBossConfig = view_as<ConfigMap>(INVALID_HANDLE);
 }
 
 Action HandleOnSoundHook(const VSH2Player player, char sample[PLATFORM_MAX_PATH], int& channel, float& volume, int& level, int& pitch, int& flags) {
@@ -515,6 +545,22 @@ Action HandleOnSoundHook(const VSH2Player player, char sample[PLATFORM_MAX_PATH]
     return Plugin_Handled;
 }
 
+Action HandleOnMessageIntro(const VSH2Player boss, char message[MAXMESSAGE]) {
+    int bossId = boss.GetPropInt("iBossType");
+
+    if(!IS_CONFIG_BOSS(bossId)) {
+        return Plugin_Continue;
+    }
+
+    int lives = boss.GetPropInt("iLives");
+    if(lives > 1) {
+        char newMessage[MAXMESSAGE];
+        FormatEx(newMessage, MAXMESSAGE, "%s x%i",message, lives);
+        message = newMessage;
+    }
+
+    return Plugin_Continue;
+}
 
 void LoadPlugins(ConfigMap bossConfig) {
     char abilityPlugins[FORWARDED_ABILITIES_COUNT][MAX_ABILITY_PLUGIN_NAME];
@@ -620,4 +666,8 @@ Native_IsConfigBoss(Handle plugin, int numParams) {
     int bossId = bossPlayer.GetPropInt("iBossType");
 
     return IS_CONFIG_BOSS(bossId);
+}
+
+Native_CloneBossConfigMap(Handle plugin, int numParams) {
+    return view_as<int>(currentBossConfig.Clone(plugin));
 }
