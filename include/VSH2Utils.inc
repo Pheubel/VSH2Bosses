@@ -33,13 +33,10 @@
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY "boss data.charge ability"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME "boss data.charge ability.name"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN "boss data.charge ability.plugin"
-#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS "boss data.charge ability.arguments"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY "boss data.rage ability"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN "boss data.rage ability.plugin"
-#define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_ARGUMENTS "boss data.rage ability.arguments"
 #define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY "boss data.life ability"
 #define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN "boss data.life ability.plugin"
-#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_ARGUMENTS "boss data.life ability.arguments"
 
 #define ERROR_BUFFER_SIZE 256
 
