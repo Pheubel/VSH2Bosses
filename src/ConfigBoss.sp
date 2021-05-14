@@ -35,6 +35,8 @@ int bossCount = 0;
 ConfigMap currentBossConfig;
 EventForwardFlag activeForwards;
 
+// TODO: low priority, replace all 'bossConfig' instances with 'currentBossConfig' and remove the assignment
+
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
     CreateNative("ConfigBossHookAbility", Native_ConfigBossHookAbility);
     CreateNative("IsConfigBoss", Native_IsConfigBoss);
@@ -466,15 +468,8 @@ void HandleOnBossMedicCall(const VSH2Player player)
     player.SetPropFloat("flRAGE", 0.0);
 }
 
-// TODO: make sure this works
 Action HandleOnBossTakeDamage(int victim, int& attacker, int& inflictor, float& damage, int& damagetype, int& weapon, float damageForce[3], float damagePosition[3], int damagecustom) {
     VSH2Player player = VSH2Player(victim);
-    //int bossId = player.GetPropInt("iBossType");
-
-    // check not needed since check has been done when initializing the boss
-    // if(!IS_CONFIG_BOSS(bossId)) {
-    //     return Plugin_Continue;
-    // }
 
     if((float(player.iHealth) - damage) > 0.0) {
         return Plugin_Continue;
