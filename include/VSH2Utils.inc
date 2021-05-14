@@ -342,6 +342,80 @@ stock bool IsValidClient(const int client, bool nobots=false)
     return IsClientInGame(client);
 }
 
+/**
+ * Sets the alpha value (opacity) for the client's weapons.
+ *
+ * @param client     The player client
+ * @param alpha      The alpha level to set for the weapons, clamped between 0 - 255.
+ * @source           https://github.com/VSH2-Devs/Vs-Saxton-Hale-2/blob/develop/addons/sourcemod/scripting/modules/stocks.inc
+ */
+stock void SetWeaponAlpha(const int client, const int alpha)
+{
+    int transparent = alpha;
+    for( int i; i<5; i++ ) {
+        int entity = GetPlayerWeaponSlot(client, i);
+        if( IsValidEntity(entity) ) {
+            if( transparent > 255 )
+                transparent = 255;
+
+            if( transparent < 0 )
+                transparent = 0;
+
+            SetEntityRenderMode(entity, RENDER_TRANSCOLOR);
+            SetEntityRenderColor(entity, 150, 150, 150, transparent);
+        }
+    }
+}
+
+/**
+ * Gets a random player from the selected team.
+ *
+ * @param alive         Determines if only alive players can be selected,
+ * @param team          The team ID to select players from.
+ * @return              Randomly selected player, -1 if no players are selected.
+ * @source              https://github.com/VSH2-Devs/Vs-Saxton-Hale-2/blob/develop/addons/sourcemod/scripting/modules/stocks.inc
+ */
+stock int GetRandomClient(bool alive=true, int team=0)
+{
+    int[] players = new int[MaxClients];
+    int count;
+    for( int i=MaxClients; i; --i ) {
+        if( !IsValidClient(i) )
+            continue;
+        else if( alive && !IsPlayerAlive(i) )
+            continue;
+        else if( team && GetClientTeam(i) != team )
+            continue;
+
+        players[count++] = i;
+    }
+    return !count ? -1 : players[GetRandomInt(0, count-1)];
+}
+
+stock int AttachParticle(const int ent, const char[] particleType, float offset = 0.0, bool battach = true)
+{
+    int particle = CreateEntityByName("info_particle_system");
+    char tName[32];
+    float pos[3]; GetEntPropVector(ent, Prop_Send, "m_vecOrigin", pos);
+    pos[2] += offset;
+    TeleportEntity(particle, pos, NULL_VECTOR, NULL_VECTOR);
+    Format(tName, sizeof(tName), "target%i", ent);
+    DispatchKeyValue(ent, "targetname", tName);
+    DispatchKeyValue(particle, "targetname", "tf2particle");
+    DispatchKeyValue(particle, "parentname", tName);
+    DispatchKeyValue(particle, "effect_name", particleType);
+    DispatchSpawn(particle);
+    SetVariantString(tName);
+    if( battach ) {
+        AcceptEntityInput(particle, "SetParent", particle, particle, 0);
+        SetEntPropEnt(particle, Prop_Send, "m_hOwnerEntity", ent);
+    }
+    ActivateEntity(particle);
+    AcceptEntityInput(particle, "start");
+    CreateTimer(3.0, RemoveEnt, EntIndexToEntRef(particle));
+    return particle;
+}
+
 // An empty panel hint used internally when sending panels.
 stock int _EmptyPanelHint(Menu menu, MenuAction action, int param1, int param2) {
     return 0;
