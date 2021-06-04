@@ -2,11 +2,14 @@
 
 #include "include/VSH2Utils.inc"
 #include "include/ConfigBoss.inc"
+#include "include/VSH2Stocks.inc"
 #include "formula_parser.sp"
 #include <vsh2>
 #include <files>
 #include <console>
 #include <sdkhooks>
+#include <helpers>
+#include <functions>
 
 #define SELECTOR_HEALTH_FORMULA "boss data.health formula"
 
@@ -30,6 +33,7 @@ PrivateForward onLifeLost;
 VSH2GameMode vsh2_gm;
 VSH2CVars vsh_cVars;
 ArrayList bossConfigs;
+ArrayList loadedPlugins;
 int bossIdOffset = -1;
 int bossCount = 0;
 ConfigMap currentBossConfig;
@@ -47,6 +51,8 @@ public void OnPluginStart() {
     onChargeAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
     onRageAbility = CreateForward(ET_Hook, Param_Cell, Param_Cell);
     onLifeLost = CreateForward(ET_Event, Param_Cell, Param_Cell, Param_Cell);
+
+    loadedPlugins = CreateArray(MAX_ABILITY_PLUGIN_NAME);
 }
 
 public void OnLibraryAdded(const char[] name) {
@@ -187,7 +193,47 @@ void LoadHooks() {
 }
 
 void HandleOnCallDownloads() {
+    ConfigMap bossConfig;
+    char path[PLATFORM_MAX_PATH];
+    for(int i = 0; i < bossCount; i++)
+    {
+        bossConfig = view_as<ConfigMap>(bossConfigs.Get(i));
 
+        // prepare models
+        ConfigMap modelSection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_MODELS);
+        if(modelSection != null) {
+            for(int m = 0; m < modelSection.Size; m++) {
+                if(modelSection.GetIntKey(m, path, PLATFORM_MAX_PATH)) {
+                    PrepareModel(path);
+                }
+            }
+        }
+
+        // prepare materials
+        ConfigMap materialSection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_MATERIALS);
+        if(materialSection != null) {
+            for(int m = 0; m < materialSection.Size; m++) {
+                if(materialSection.GetIntKey(m, path, PLATFORM_MAX_PATH)) {
+                    PrepareMaterial(path);
+                }
+            }
+        }
+
+        // prepare sounds
+        ConfigMap soundSection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_SOUNDS);
+        if(soundSection != null) {
+            for(int ss = 0; ss <= soundSection.Size; ss++) {
+                ConfigMap soundCategorySection = soundSection.GetIntSection(ss);
+                if(soundCategorySection != null) {
+                    for(int s = 0; s < soundCategorySection.Size; s++) {
+                        if(soundCategorySection.GetIntKey(s, path, PLATFORM_MAX_PATH)) {
+                            PrepareMaterial(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 void HandleOnBossMenu(Menu& menu) {
@@ -207,6 +253,8 @@ void HandleOnBossSelected(const VSH2Player player) {
     if(!IS_CONFIG_BOSS(bossId)) {
         return;
     }
+
+    LogMessage("on boss selected executed");
 
     ConfigMap bossConfig = GET_BOSS_CONFIG(bossId);
     currentBossConfig = bossConfig;
@@ -391,26 +439,6 @@ void HandleOnBossThink(const VSH2Player player)
     player.SpeedThink(maxSpeed,defaultSpeed);
     player.GlowThink(0.1);
 
-    char abilityName[MAX_ABILITY_NAME_SIZE];
-    if(activeForwards & CB_OnChargeAbility) {
-        Call_StartForward(onChargeAbility);
-        Call_PushCell(player);
-        Call_Finish();
-
-        if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME, abilityName, MAX_ABILITY_NAME_SIZE) == 0) {
-            abilityName = "Ability";
-        }
-    }
-    else {
-        abilityName = "Jump";
-        if( player.SuperJumpThink(2.5, 25.0) ) {
-            PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_CHARGE_ABILITY, VSH2_VOICE_ABILITY);
-            player.SuperJump(player.GetPropFloat("flCharge"), -100.0);
-        }
-
-        player.WeighDownThink(2.0, 0.1);
-    }
-
     if( OnlyScoutsLeft(VSH2Team_Red) ) {
         player.SetPropFloat("flRAGE", player.GetPropFloat("flRAGE") + vsh_cVars.scout_rage_gen.FloatValue);
     }
@@ -418,13 +446,56 @@ void HandleOnBossThink(const VSH2Player player)
     /// hud code
     SetHudTextParams(-1.0, 0.77, 0.35, 255, 255, 255, 255);
     Handle hud = vsh2_gm.hHUD;
-    float charge = player.GetPropFloat("flCharge");
     float rage = player.GetPropFloat("flRAGE");
-    if( rage >= 100.0 ) {
-        ShowSyncHudText(client, hud, "%s: %i%% | Rage: FULL - Call Medic (default: E) to activate",abilityName, player.GetPropInt("bSuperCharge") ? 1000 : RoundFloat(charge) * 4);
+
+    char abilityName[MAX_ABILITY_NAME_SIZE];
+    if(activeForwards & CB_OnChargeAbility) {
+        float charge = player.GetPropFloat("flCharge");
+
+        float chargeTime;
+        if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS_CHARGE_TIME, chargeTime) == 0) {
+            chargeTime = DEFAULT_CHARGE_TIME;
+        }
+
+        if(player.SuperJumpThink(CHARGE/chargeTime, FULL_CHARGE)) {
+
+            bool requireFullCharge;
+            if(bossConfig.GetBool(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_REQUIRE_FULL_CHARGE, requireFullCharge)) {
+                requireFullCharge = false;
+            }
+
+            if(!requireFullCharge || charge >= FULL_CHARGE){
+                Call_StartForward(onChargeAbility);
+                Call_PushCell(player);
+                Call_Finish();
+
+                float cooldown;
+                if(bossConfig.GetFloat(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS_COOLDOWN, cooldown) == 0) {
+                    cooldown = DEFAULT_CHARGE_COOLDOWN;
+                }
+
+                player.SetPropFloat("flCharge", cooldown);
+            }
+        }
+
+        if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME, abilityName, MAX_ABILITY_NAME_SIZE) == 0) {
+            abilityName = "Ability";
+        }
+
+        if( rage >= 100.0 ) {
+            ShowSyncHudText(client, hud, "%s: %i%% | Rage: FULL - Call Medic (default: E) to activate",abilityName, player.GetPropInt("bSuperCharge") ? 1000 : RoundFloat(charge) * 4);
+        }
+        else {
+            ShowSyncHudText(client, hud, "%s: %i%% | Rage: %0.1f",abilityName, player.GetPropInt("bSuperCharge") ? 1000 : RoundFloat(charge) * 4, rage);
+        }
     }
     else {
-        ShowSyncHudText(client, hud, "%s: %i%% | Rage: %0.1f",abilityName, player.GetPropInt("bSuperCharge") ? 1000 : RoundFloat(charge) * 4, rage);
+        if( rage >= 100.0 ) {
+            ShowSyncHudText(client, hud, "Rage: FULL - Call Medic (default: E) to activate");
+        }
+        else {
+            ShowSyncHudText(client, hud, "Rage: %0.1f", rage);
+        }
     }
 }
 
@@ -432,11 +503,13 @@ void HandleOnBossMedicCall(const VSH2Player player)
 {
     int bossId = player.GetPropInt("iBossType");
 
-    if( !IS_CONFIG_BOSS(bossId) ){//|| player.GetPropFloat("flRAGE") < 100.0) {
+    if( !IS_CONFIG_BOSS(bossId) || player.GetPropFloat("flRAGE") < 100.0) {
         return;
     }
 
     ConfigMap bossConfig = currentBossConfig; // GET_BOSS_CONFIG(bossId);
+
+    PrintCfg(bossConfig);
 
     LogMessage("Config Boss config handle: %i", bossConfig);
 
@@ -525,7 +598,7 @@ void HandleOnRoundEnd(const VSH2Player player, bool bossBool, char message[MAXME
         PlayRandomSoundFromConfigSelector(player, bossConfig, VSH_DEFAULT_SELECTOR_SOUNDS_WIN, VSH2_VOICE_LOSE);
     }
 
-    UnloadPlugins(bossConfig);
+    UnloadPlugins();
 
     currentBossConfig = view_as<ConfigMap>(INVALID_HANDLE);
 }
@@ -558,86 +631,131 @@ Action HandleOnMessageIntro(const VSH2Player boss, char message[MAXMESSAGE]) {
 }
 
 void LoadPlugins(ConfigMap bossConfig) {
-    char abilityPlugins[FORWARDED_ABILITIES_COUNT][MAX_ABILITY_PLUGIN_NAME];
     int abilityToLoad = 0;
 
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPlugins[0], MAX_ABILITY_PLUGIN_NAME) != 0) {
+    ConfigMap chargeAbilitySection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY);
+    int chargeAbilityCount = 0;
+    if(chargeAbilitySection != null) {
+        chargeAbilityCount = chargeAbilitySection.Size;
+    }
+    int[] chargeAbilityPluginIndices = new int[chargeAbilityCount];
+    if(chargeAbilityCount != 0) {
         abilityToLoad |= view_as<int>(CB_OnChargeAbility);
+
+        for(int i = 0; i < chargeAbilityCount; ++i)
+        {
+            ConfigMap pluginSection = chargeAbilitySection.GetIntSection(i);
+            chargeAbilityPluginIndices[i] = LoadPlugin(pluginSection, i);
+        }
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[1], MAX_ABILITY_PLUGIN_NAME) != 0) {
+
+    ConfigMap rageAbilitySection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_RAGE_ABILITY);
+    int rageAbilityCount = 0;
+    if(rageAbilitySection != null) {
+        rageAbilityCount = rageAbilitySection.Size;
+    }
+    int[] rageAbilityPluginIndices = new int[rageAbilityCount];
+    if(rageAbilityCount != 0) {
         abilityToLoad |= view_as<int>(CB_OnRageAbility);
+
+        for(int i = 0; i < rageAbilityCount; ++i)
+        {
+            ConfigMap pluginSection = rageAbilitySection.GetIntSection(i);
+            rageAbilityPluginIndices[i] = LoadPlugin(pluginSection, i);
+        }
     }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[2], MAX_ABILITY_PLUGIN_NAME) != 0) {
+
+    ConfigMap onLifeLostAbilitySection = bossConfig.GetSection(VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY);
+    int onLifeLostAbilityCount = 0;
+    if(onLifeLostAbilitySection != null) {
+        onLifeLostAbilityCount = onLifeLostAbilitySection.Size;
+    }
+    int[] OnLifeLostPluginIndices = new int[onLifeLostAbilityCount];
+    if(onLifeLostAbilityCount != 0) {
         abilityToLoad |= view_as<int>(CB_OnLifeLostAbility);
+
+        for(int i = 0; i < onLifeLostAbilityCount; ++i)
+        {
+            ConfigMap pluginSection = onLifeLostAbilitySection.GetIntSection(i);
+            OnLifeLostPluginIndices[i] = LoadPlugin(pluginSection, i);
+        }
     }
+
+    ServerExecute();
+
+    // load plugin handles
+    Handle[] pluginHandles = new Handle[loadedPlugins.Length];
+    char pluginFileBuffer[PLATFORM_MAX_PATH];
+    for(int i = 0; i < loadedPlugins.Length; i++)
+    {
+        char pluginNameBuffer[MAX_ABILITY_PLUGIN_NAME];
+        loadedPlugins.GetString(i, pluginNameBuffer, MAX_ABILITY_PLUGIN_NAME);
+        Format(pluginFileBuffer, PLATFORM_MAX_PATH, "vsh2bosses/Abilities/%s.smx", pluginNameBuffer);
+        Handle pluginHandle = FindPluginByFile(pluginFileBuffer);
+
+        if(pluginHandle == INVALID_HANDLE) {
+            LogMessage("Could not get handle from plugin: \"%s\"", pluginFileBuffer);
+        }
+
+        pluginHandles[i] = pluginHandle;
+    }
+
+    RegisterAbilityPlugins(pluginHandles, chargeAbilityPluginIndices, chargeAbilityCount, "RegisterChargeAbility");
+    RegisterAbilityPlugins(pluginHandles, rageAbilityPluginIndices, rageAbilityCount, "RegisterRageAbility");
+    RegisterAbilityPlugins(pluginHandles, OnLifeLostPluginIndices, onLifeLostAbilityCount, "RegisterOnLifeLostAbility");
 
     activeForwards = view_as<EventForwardFlag>(abilityToLoad);
+}
 
-    for(int i = 0; i < FORWARDED_ABILITIES_COUNT; ++i) {
-        // ignore entry if the ability doesnt have to load
-        if(!(abilityToLoad & (1 << i))) {
-            continue;
-        }
+int LoadPlugin(ConfigMap pluginSection, int sectionIndex) {
+    char pluginNameBuffer[MAX_ABILITY_PLUGIN_NAME];
+    if(pluginSection.Get("plugin", pluginNameBuffer, MAX_ABILITY_PLUGIN_NAME) == 0) {
+        LogMessage("Could not read \"plugin\" field of charge ability %i", sectionIndex);
+        return -1;
+    }
 
-        bool foundDuplicate = false;
-        for(int j = 0; j < i; ++j)
-        {
-            // ignore entry if the ability doesnt have to load
-            if(!(abilityToLoad & (1 << j))) {
-                continue;
-            }
-
-            if(StrEqual(abilityPlugins[i], abilityPlugins[j], true)) {
-                foundDuplicate = true;
-                break;
-            }
-        }
-
-        if(!foundDuplicate) {
-            ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", abilityPlugins[i]);
-        }
+    int pluginIndex = loadedPlugins.FindString(pluginNameBuffer);
+    if(pluginIndex != -1) {
+        return pluginIndex;
+    }
+    else {
+        ServerCommand("sm plugins load vsh2bosses/Abilities/%s.smx", pluginNameBuffer);
+        return loadedPlugins.PushString(pluginNameBuffer);
     }
 }
 
-void UnloadPlugins(ConfigMap bossConfig) {
-    char abilityPlugins[FORWARDED_ABILITIES_COUNT][MAX_ABILITY_PLUGIN_NAME];
-    int abilityToUnload = 0;
-
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN, abilityPlugins[0], MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToUnload |= view_as<int>(CB_OnChargeAbility);
-    }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN, abilityPlugins[1], MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToUnload |= view_as<int>(CB_OnRageAbility);
-    }
-    if(bossConfig.Get(VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN, abilityPlugins[2], MAX_ABILITY_PLUGIN_NAME) != 0) {
-        abilityToUnload |= view_as<int>(CB_OnLifeLostAbility);
-    }
-
-    activeForwards = view_as<EventForwardFlag>(0);
-
-    for(int i = 0; i < FORWARDED_ABILITIES_COUNT; ++i) {
-        // ignore entry if the ability doesnt have to load
-        if(!(abilityToUnload & (1 << i))) {
+void RegisterAbilityPlugins(Handle[] pluginHandles, int[] abilityPluginIndices, int abilityCount, char[] abilityFunctionName) {
+    for(int i = 0; i < abilityCount; i++)
+    {
+        if(abilityPluginIndices[i] == -1) {
             continue;
         }
 
-        bool foundDuplicate = false;
-        for(int j = 0; j < i; ++j)
-        {
-            // ignore entry if the ability doesnt have to load
-            if(!(abilityToUnload & (1 << j))) {
-                continue;
-            }
+        Handle pluginHandle = pluginHandles[abilityPluginIndices[i]];
 
-            if(StrEqual(abilityPlugins[i], abilityPlugins[j], true)) {
-                foundDuplicate = true;
-                break;
-            }
+        Function registerAbilityFunction = GetFunctionByName(pluginHandle, abilityFunctionName);
+        if(registerAbilityFunction == INVALID_FUNCTION) {
+            char pluginNameBuffer[MAX_ABILITY_PLUGIN_NAME];
+            loadedPlugins.GetString(abilityPluginIndices[i], pluginNameBuffer, MAX_ABILITY_PLUGIN_NAME);
+            LogMessage("%s ability plugin does not support registering specified ability (missing \"%s(int)\" function)", pluginNameBuffer, abilityFunctionName);
+            continue;
         }
 
-        if(!foundDuplicate) {
-            ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", abilityPlugins[i]);
-        }
+        Call_StartFunction(pluginHandle, registerAbilityFunction);
+        Call_PushCell(i);
+        Call_Finish();
+    }
+}
+
+void UnloadPlugins() {
+    char pluginNameBuffer[MAX_ABILITY_PLUGIN_NAME];
+
+    activeForwards = view_as<EventForwardFlag>(0);
+
+    for(int i = 0; i < loadedPlugins.Length; ++i) {
+        loadedPlugins.GetString(i, pluginNameBuffer, MAX_ABILITY_PLUGIN_NAME);
+
+        ServerCommand("sm plugins unload vsh2bosses/Abilities/%s.smx", pluginNameBuffer);
     }
 }
 

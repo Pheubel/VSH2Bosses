@@ -1,12 +1,19 @@
+#if !defined(VSH2UTILS_INC)
+#define VSH2UTILS_INC
+
 #pragma semicolon 1
 
 #include <vsh2>
 
 #define MAX_ATTRIBUTE_STRING_SIZE 128
 
+#define CHARGE 2.5
+#define FULL_CHARGE 25.0
+
 #define VSH_DEFAULT_SELECTOR_DISABLE "boss data.disable"
 #define VSH_DEFAULT_SELECTOR_CLASS "boss data.class"
 #define VSH_DEFAULT_SELECTOR_LIVES "boss data.lives"
+#define VSH_DEFAULT_SELECTOR_SOUNDS "boss data.sounds"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_INTROS "boss data.sounds.intros"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_SUPER_JUMP "boss data.sounds.super jump"
 #define VSH_DEFAULT_SELECTOR_SOUNDS_CHARGE_ABILITY "boss data.sounds.charge ability"
@@ -23,7 +30,7 @@
 #define VSH_DEFAULT_SELECTOR_NAME "boss data.name"
 #define VSH_DEFAULT_SELECTOR_PANEL_MESSAGE "boss data.panel msg"
 #define VSH_DEFAULT_SELECTOR_MODELS "boss data.models"
-#define VSH_DEFAULT_SELECTOR_SKINS "boss data.skins"
+#define VSH_DEFAULT_SELECTOR_MATERIALS "boss data.materials"
 #define VSH_DEFAULT_SELECTOR_RAGE_DISTANCE "boss data.rage dist"
 #define VSH_DEFAULT_SELECTOR_MOVE_SPEED "boss data.move speed"
 // #define VSH_DEFAULT_SELECTOR_MAX_SPEED "boss data.max speed"  //TODO: check if speed think actually ramps up to this
@@ -31,12 +38,15 @@
 #define VSH_DEFAULT_SELECTOR_WEAPON_CLASS "boss data.weapon class"
 #define VSH_DEFAULT_SELECTOR_WEAPON_ID "boss data.weapon id"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY "boss data.charge ability"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_REQUIRE_FULL_CHARGE "boss data.charge ability.require full charge"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_NAME "boss data.charge ability.name"
 #define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_PLUGIN "boss data.charge ability.plugin"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS_CHARGE_TIME "boss data.charge ability.charge time"
+#define VSH_DEFAULT_SELECTOR_CHARGE_ABILITY_ARGUMENTS_COOLDOWN "boss data.charge ability.cooldown"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY "boss data.rage ability"
 #define VSH_DEFAULT_SELECTOR_RAGE_ABILITY_PLUGIN "boss data.rage ability.plugin"
-#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY "boss data.life ability"
-#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN "boss data.life ability.plugin"
+#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY "boss data.life lost ability"
+#define VSH_DEFAULT_SELECTOR_LIFE_LOST_ABILITY_PLUGIN "boss data.life lost ability.plugin"
 
 #define ERROR_BUFFER_SIZE 256
 
@@ -247,19 +257,18 @@ stock void PlayRandomSoundFromConfigSelector(const VSH2Player player, ConfigMap 
 * @param soundFlag         The flags used while playing the sound.
 * @param includeUnknown    Determines if the enumeration should start with an unknown class.
 */
-stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFClassType class, ConfigMap config, char[] selector, int soundFlag, bool includeUnknown = false) {
+stock void PlayRandomClassSoundFromConfigSelector(const VSH2Player player, TFClassType class, ConfigMap config, char[] selector, int soundFlag) {
     ConfigMap classesSection = config.GetSection(selector);
     if(classesSection != null) {
-        int key;
-        if(includeUnknown) {
-            key = view_as<int>(class);
-        }
-        else {
-            key = view_as<int>(class) - 1;
-        }
+        int key = view_as<int>(class);
         ConfigMap classSection = classSection.GetIntSection(key);
         if(classSection != null){
             PlayRandomSoundFromConfigSection(player, classSection, soundFlag);
+        } else {
+            classSection = classSection.GetIntSection(view_as<int>(TFClass_Unknown));
+            if(classSection != null) {
+                PlayRandomSoundFromConfigSection(player, classSection, soundFlag);
+            }
         }
     }
     else {
@@ -307,38 +316,6 @@ stock int HandleKillingSpree(const VSH2Player player) {
     return player.GetPropInt("iKills") + 1;
 }
 
-// TODO: document this
-/**
-* Description
-*
-* @param team     Param description
-* @return         True if only scouts are left alive.
-*/
-stock bool OnlyScoutsLeft(const int team)
-{
-    for( int i=MaxClients; i; --i ) {
-        if( !IsValidClient(i) || !IsPlayerAlive(i) )
-            continue;
-        else if( GetClientTeam(i) == team && TF2_GetPlayerClass(i) != TFClass_Scout )
-            return false;
-    }
-    return true;
-}
-
-/**
-* Description
-*
-* @param client     Param description
-* @param false      Param description
-* @return           Return description
-*/
-stock bool IsValidClient(const int client, bool nobots=false)
-{
-    if( client <= 0 || client > MaxClients || !IsClientConnected(client) || (nobots && IsFakeClient(client)) )
-        return false;
-    return IsClientInGame(client);
-}
-
 /**
  * Sets the alpha value (opacity) for the client's weapons.
  *
@@ -362,55 +339,6 @@ stock void SetWeaponAlpha(const int client, const int alpha)
             SetEntityRenderColor(entity, 150, 150, 150, transparent);
         }
     }
-}
-
-/**
- * Gets a random player from the selected team.
- *
- * @param alive         Determines if only alive players can be selected,
- * @param team          The team ID to select players from.
- * @return              Randomly selected player, -1 if no players are selected.
- * @source              https://github.com/VSH2-Devs/Vs-Saxton-Hale-2/blob/develop/addons/sourcemod/scripting/modules/stocks.inc
- */
-stock int GetRandomClient(bool alive=true, int team=0)
-{
-    int[] players = new int[MaxClients];
-    int count;
-    for( int i=MaxClients; i; --i ) {
-        if( !IsValidClient(i) )
-            continue;
-        else if( alive && !IsPlayerAlive(i) )
-            continue;
-        else if( team && GetClientTeam(i) != team )
-            continue;
-
-        players[count++] = i;
-    }
-    return !count ? -1 : players[GetRandomInt(0, count-1)];
-}
-
-stock int AttachParticle(const int ent, const char[] particleType, float offset = 0.0, bool battach = true)
-{
-    int particle = CreateEntityByName("info_particle_system");
-    char tName[32];
-    float pos[3]; GetEntPropVector(ent, Prop_Send, "m_vecOrigin", pos);
-    pos[2] += offset;
-    TeleportEntity(particle, pos, NULL_VECTOR, NULL_VECTOR);
-    Format(tName, sizeof(tName), "target%i", ent);
-    DispatchKeyValue(ent, "targetname", tName);
-    DispatchKeyValue(particle, "targetname", "tf2particle");
-    DispatchKeyValue(particle, "parentname", tName);
-    DispatchKeyValue(particle, "effect_name", particleType);
-    DispatchSpawn(particle);
-    SetVariantString(tName);
-    if( battach ) {
-        AcceptEntityInput(particle, "SetParent", particle, particle, 0);
-        SetEntPropEnt(particle, Prop_Send, "m_hOwnerEntity", ent);
-    }
-    ActivateEntity(particle);
-    AcceptEntityInput(particle, "start");
-    CreateTimer(3.0, RemoveEnt, EntIndexToEntRef(particle));
-    return particle;
 }
 
 // An empty panel hint used internally when sending panels.
@@ -464,3 +392,4 @@ float rage = %1.GetPropFloat("flRAGE");                         \
 #define VSH_DEFAULT_CODE_ON_SOUND_HOOK(%1,%2,%3) \
 ((!IsBossType(%1, %2) || !IsVoiceLine(%3)) ? Plugin_Continue : Plugin_Handled)
 
+#endif
