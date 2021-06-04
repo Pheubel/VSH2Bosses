@@ -1,5 +1,8 @@
 // Data taken from https://wiki.alliedmods.net/Team_Fortress_2_Item_Definition_Indexes on the 7th of may, 2021. These values might not cover all items.
 
+#if !defined(ITEM_DEFINITIONS_INC)
+#define ITEM_DEFINITIONS_INC
+
 // weapon ID's
 #define TF_WEAPON_ID_SCOUT_PRIMARY_SCATTERGUN 13
 #define TF_WEAPON_ID_SCOUT_PRIMARY_SCATTERGUN_RENAMED_OR_STRANGE 200
@@ -2847,3 +2850,5 @@
 #define TF_TAUNT_ID_TRUE_SCOTSMANS_CALL 30671
 #define TF_TAUNT_ID_ZOOMIN_BROOM 30672
 #define TF_TAUNT_ID_SOLDIERS_REQUIEM 30673
+
+#endif

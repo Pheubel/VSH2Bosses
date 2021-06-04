@@ -1,5 +1,8 @@
 // Data taken from https://wiki.teamfortress.com/wiki/List_of_item_attributes on the 7th of may, 2021. These values might not cover all attributes.
 
+#if !defined(ITEM_ATTRIBUTES_INC)
+#define ITEM_ATTRIBUTES_INC
+
 #define MIN_ATTRIBUTES_ON_ITEMS 0
 #define MAX_ATTRIBUTES_ON_ITEMS 15
 
@@ -834,3 +837,5 @@
 #define ATTRIBUTE_QUEST_EARNED_STANDARD_POINTS 3016
 #define ATTRIBUTE_QUEST_EARNED_BONUS_POINTS 3017
 #define ATTRIBUTE_ITEM_DROP_WAVE 3018
+
+#endif
